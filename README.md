@@ -219,6 +219,7 @@ WhisperLiveKit offers extensive configuration options:
 | `--static-init-prompt` | Static prompt that doesn't scroll | `None` |
 | `--max-context-tokens` | Maximum context tokens | `None` |
 | `--model-path` | Direct path to .pt model file. Download it if not found | `./base.pt` |
+| `--preloaded-model-count` | Optional. Number of models to preload in memory to speed up loading (set up to the expected number of concurrent users) | `1` |
 
 ## 🔧 How It Works
 

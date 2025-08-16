@@ -90,7 +90,7 @@ class TranscriptionEngine:
                 simulstreaming_kwargs = {}
                 for attr in ['frame_threshold', 'beams', 'decoder_type', 'audio_max_len', 'audio_min_len',
                             'cif_ckpt_path', 'never_fire', 'init_prompt', 'static_init_prompt',
-                            'max_context_tokens', 'model_path']:
+                            'max_context_tokens', 'model_path', 'warmup_file', 'preload_model_count']:
                     if hasattr(self.args, attr):
                         simulstreaming_kwargs[attr] = getattr(self.args, attr)
 
