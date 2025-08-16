@@ -15,6 +15,7 @@ from rx.core import Observer
 from typing import Tuple, Any, List
 from pyannote.core import Annotation
 import diart.models as m
+from whisperlivekit.config import HF_TOKEN, HF_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -24,24 +25,24 @@ def extract_number(s: str) -> int:
 
 class DiarizationObserver(Observer):
     """Observer that logs all data emitted by the diarization pipeline and stores speaker segments."""
-    
+
     def __init__(self):
         self.speaker_segments = []
         self.processed_time = 0
         self.segment_lock = threading.Lock()
-    
+
     def on_next(self, value: Tuple[Annotation, Any]):
         annotation, audio = value
-        
+
         logger.debug("\n--- New Diarization Result ---")
-        
+
         duration = audio.extent.end - audio.extent.start
         logger.debug(f"Audio segment: {audio.extent.start:.2f}s - {audio.extent.end:.2f}s (duration: {duration:.2f}s)")
         logger.debug(f"Audio shape: {audio.data.shape}")
-        
+
         with self.segment_lock:
             if audio.extent.end > self.processed_time:
-                self.processed_time = audio.extent.end            
+                self.processed_time = audio.extent.end
             if annotation and len(annotation._labels) > 0:
                 logger.debug("\nSpeaker segments:")
                 for speaker, label in annotation._labels.items():
@@ -54,25 +55,25 @@ class DiarizationObserver(Observer):
                         ))
             else:
                 logger.debug("\nNo speakers detected in this segment")
-                
+
     def get_segments(self) -> List[SpeakerSegment]:
         """Get a copy of the current speaker segments."""
         with self.segment_lock:
             return self.speaker_segments.copy()
-    
+
     def clear_old_segments(self, older_than: float = 30.0):
         """Clear segments older than the specified time."""
         with self.segment_lock:
             current_time = self.processed_time
             self.speaker_segments = [
-                segment for segment in self.speaker_segments 
+                segment for segment in self.speaker_segments
                 if current_time - segment.end < older_than
             ]
-    
+
     def on_error(self, error):
         """Handle an error in the stream."""
         logger.debug(f"Error in diarization stream: {error}")
-        
+
     def on_completed(self):
         """Handle the completion of the stream."""
         logger.debug("Diarization stream completed")
@@ -99,7 +100,7 @@ class WebSocketAudioSource(AudioSource):
         self._processing_thread = threading.Thread(target=self._process_chunks)
         self._processing_thread.daemon = True
         self._processing_thread.start()
-        
+
         self._close_event.wait()
         if self._processing_thread:
             self._processing_thread.join(timeout=2.0)
@@ -109,30 +110,30 @@ class WebSocketAudioSource(AudioSource):
         while not self._closed:
             try:
                 audio_chunk = self._queue.get(timeout=0.1)
-                
+
                 with self._buffer_lock:
                     self._buffer = np.concatenate([self._buffer, audio_chunk])
-                    
+
                     while len(self._buffer) >= self.block_size:
                         chunk = self._buffer[:self.block_size]
                         self._buffer = self._buffer[self.block_size:]
-                        
+
                         current_time = time.time()
                         time_since_last = current_time - self._last_chunk_time
                         if time_since_last < self.block_duration:
                             time.sleep(self.block_duration - time_since_last)
-                        
+
                         chunk_reshaped = chunk.reshape(1, -1)
                         self.stream.on_next(chunk_reshaped)
                         self._last_chunk_time = time.time()
-                        
+
             except Empty:
                 with self._buffer_lock:
                     if len(self._buffer) > 0 and time.time() - self._last_chunk_time > self.block_duration:
                         padded_chunk = np.zeros(self.block_size, dtype=np.float32)
                         padded_chunk[:len(self._buffer)] = self._buffer
                         self._buffer = np.array([], dtype=np.float32)
-                        
+
                         chunk_reshaped = padded_chunk.reshape(1, -1)
                         self.stream.on_next(chunk_reshaped)
                         self._last_chunk_time = time.time()
@@ -140,14 +141,14 @@ class WebSocketAudioSource(AudioSource):
                 logger.error(f"Error in audio processing thread: {e}")
                 self.stream.on_error(e)
                 break
-        
+
         with self._buffer_lock:
             if len(self._buffer) > 0:
                 padded_chunk = np.zeros(self.block_size, dtype=np.float32)
                 padded_chunk[:len(self._buffer)] = self._buffer
                 chunk_reshaped = padded_chunk.reshape(1, -1)
                 self.stream.on_next(chunk_reshaped)
-        
+
         self.stream.on_completed()
 
     def close(self):
@@ -166,30 +167,30 @@ class WebSocketAudioSource(AudioSource):
 
 class DiartDiarization:
     def __init__(self, sample_rate: int = 16000, config : SpeakerDiarizationConfig = None, use_microphone: bool = False, block_duration: float = 1.5, segmentation_model_name: str = "pyannote/segmentation-3.0", embedding_model_name: str = "pyannote/embedding"):
-        segmentation_model = m.SegmentationModel.from_pretrained(segmentation_model_name)
-        embedding_model = m.EmbeddingModel.from_pretrained(embedding_model_name)
-        
+        segmentation_model = m.SegmentationModel.from_pretrained(segmentation_model_name, use_hf_token=HF_TOKEN)
+        embedding_model = m.EmbeddingModel.from_pretrained(embedding_model_name, use_hf_token=HF_TOKEN)
+
         if config is None:
             config = SpeakerDiarizationConfig(
                 segmentation=segmentation_model,
                 embedding=embedding_model,
             )
-        
-        self.pipeline = SpeakerDiarization(config=config)        
+
+        self.pipeline = SpeakerDiarization(config=config)
         self.observer = DiarizationObserver()
         self.lag_diart = None
-        
+
         if use_microphone:
             self.source = MicrophoneAudioSource(block_duration=block_duration)
             self.custom_source = None
         else:
             self.custom_source = WebSocketAudioSource(
-                uri="websocket_source", 
+                uri="websocket_source",
                 sample_rate=sample_rate,
                 block_duration=block_duration
             )
             self.source = self.custom_source
-            
+
         self.inference = StreamingInference(
             pipeline=self.pipeline,
             source=self.source,
@@ -205,8 +206,8 @@ class DiartDiarization:
         Only used when working with WebSocketAudioSource.
         """
         if self.custom_source:
-            self.custom_source.push_audio(pcm_array)            
-        # self.observer.clear_old_segments()        
+            self.custom_source.push_audio(pcm_array)
+        # self.observer.clear_old_segments()
 
     def close(self):
         """Close the audio source."""
@@ -217,20 +218,20 @@ class DiartDiarization:
         """
         Assign speakers to tokens based on timing overlap with speaker segments.
         Uses the segments collected by the observer.
-        
+
         If use_punctuation_split is True, uses punctuation marks to refine speaker boundaries.
         """
         segments = self.observer.get_segments()
-        
+
         # Debug logging
         logger.debug(f"assign_speakers_to_tokens called with {len(tokens)} tokens")
         logger.debug(f"Available segments: {len(segments)}")
         for i, seg in enumerate(segments[:5]):  # Show first 5 segments
             logger.debug(f"  Segment {i}: {seg.speaker} [{seg.start:.2f}-{seg.end:.2f}]")
-        
+
         if not self.lag_diart and segments and tokens:
             self.lag_diart = segments[0].start - tokens[0].start
-        
+
         if not use_punctuation_split:
             for token in tokens:
                 for segment in segments:
@@ -239,7 +240,7 @@ class DiartDiarization:
         else:
             tokens = add_speaker_to_tokens(segments, tokens)
         return tokens
-        
+
 def concatenate_speakers(segments):
     segments_concatenated = [{"speaker": 1, "begin": 0.0, "end": 0.0}]
     for segment in segments:
@@ -250,7 +251,7 @@ def concatenate_speakers(segments):
             segments_concatenated[-1]['end'] = segment.end
     # print("Segments concatenated:")
     # for entry in segments_concatenated:
-    #     print(f"Speaker {entry['speaker']}: {entry['begin']:.2f}s - {entry['end']:.2f}s")   
+    #     print(f"Speaker {entry['speaker']}: {entry['begin']:.2f}s - {entry['end']:.2f}s")
     return segments_concatenated
 
 

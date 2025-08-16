@@ -131,10 +131,16 @@ dmypy.json
 run_*.sh
 
 # Downloaded models
-*.pt 
+*.pt
+model/*
+!model/.gitkeep
 
 # Debug & testing
 test_*.py
 launch.json
 .DS_Store
 test/*
+
+
+# uv
+uv.lock

@@ -4,16 +4,17 @@ import logging
 from typing import List, Tuple, Optional
 import logging
 from whisperlivekit.timed_objects import ASRToken, Transcript
-from whisperlivekit.simul_whisper.license_simulstreaming import SIMULSTREAMING_LICENSE
+from whisperlivekit.config import WHISPER_CACHE_DIR
+from .license_simulstreaming import SIMULSTREAMING_LICENSE
 from .whisper import load_model, tokenizer
 import os
 logger = logging.getLogger(__name__)
 
 try:
     import torch
-    from whisperlivekit.simul_whisper.config import AlignAttConfig
-    from whisperlivekit.simul_whisper.simul_whisper import PaddedAlignAttWhisper
-    from whisperlivekit.simul_whisper.whisper import tokenizer
+    from .config import AlignAttConfig
+    from .simul_whisper import PaddedAlignAttWhisper
+    from .whisper import tokenizer
 except ImportError as e:
     raise ImportError(
         """SimulStreaming dependencies are not available.
@@ -27,16 +28,16 @@ class SimulStreamingOnlineProcessor:
         asr,
         logfile=sys.stderr,
         warmup_file=None
-    ):        
+    ):
         self.asr = asr
         self.logfile = logfile
         self.is_last = False
         self.beg = 0.0
         self.end = 0.0
         self.cumulative_audio_duration = 0.0
-        
+
         self.committed: List[ASRToken] = []
-        self.last_result_tokens: List[ASRToken] = []        
+        self.last_result_tokens: List[ASRToken] = []
         self.model = PaddedAlignAttWhisper(
             cfg=asr.cfg,
             loaded_model=asr.whisper_model)
@@ -45,25 +46,25 @@ class SimulStreamingOnlineProcessor:
 
     def insert_audio_chunk(self, audio: np.ndarray, audio_stream_end_time: Optional[float] = None):
         """Append an audio chunk to be processed by SimulStreaming."""
-            
+
         # Convert numpy array to torch tensor
         audio_tensor = torch.from_numpy(audio).float()
-        
+
         # Update timing
         chunk_duration = len(audio) / self.SAMPLING_RATE
         self.cumulative_audio_duration += chunk_duration
-        
+
         if audio_stream_end_time is not None:
             self.end = audio_stream_end_time
         else:
-            self.end = self.cumulative_audio_duration            
+            self.end = self.cumulative_audio_duration
         self.model.insert_audio(audio_tensor)
 
     def get_buffer(self):
         return Transcript(
-            start=None, 
-            end=None, 
-            text='', 
+            start=None,
+            end=None,
+            text='',
             probability=None
         )
 
@@ -95,16 +96,16 @@ class SimulStreamingOnlineProcessor:
     def process_iter(self) -> Tuple[List[ASRToken], float]:
         """
         Process accumulated audio chunks using SimulStreaming.
-        
+
         Returns a tuple: (list of committed ASRToken objects, float representing the audio processed up to time).
         """
-        try:            
+        try:
             tokens, generation_progress = self.model.infer(is_last=self.is_last)
             ts_words = self.timestamped_text(tokens, generation_progress)
-            
+
             new_tokens = []
             for ts_word in ts_words:
-                
+
                 start, end, word = ts_word
                 token = ASRToken(
                     start=start,
@@ -114,10 +115,10 @@ class SimulStreamingOnlineProcessor:
                 )
                 new_tokens.append(token)
                 self.committed.extend(new_tokens)
-            
+
             return new_tokens, self.end
 
-            
+
         except Exception as e:
             logger.exception(f"SimulStreaming processing error: {e}")
             return [], self.end
@@ -142,7 +143,7 @@ class SimulStreamingASR():
         self.logfile = logfile
         self.transcribe_kargs = {}
         self.original_language = None if lan == "auto" else lan
-        
+
         self.model_path = kwargs.get('model_path', './large-v3.pt')
         self.frame_threshold = kwargs.get('frame_threshold', 25)
         self.audio_max_len = kwargs.get('audio_max_len', 30.0)
@@ -156,28 +157,30 @@ class SimulStreamingASR():
         self.init_prompt = kwargs.get('init_prompt', None)
         self.static_init_prompt = kwargs.get('static_init_prompt', None)
         self.max_context_tokens = kwargs.get('max_context_tokens', None)
-        
+
         if model_dir is not None:
             self.model_path = model_dir
         elif modelsize is not None:
+            # Use cache directory if specified, otherwise current directory
+            cache_dir = WHISPER_CACHE_DIR or '.'
             model_mapping = {
-                'tiny': './tiny.pt',
-                'base': './base.pt',
-                'small': './small.pt',
-                'medium': './medium.pt',
-                'medium.en': './medium.en.pt',
-                'large-v1': './large-v1.pt',
-                'base.en': './base.en.pt',
-                'small.en': './small.en.pt',
-                'tiny.en': './tiny.en.pt',
-                'large-v2': './large-v2.pt',
-                'large-v3': './large-v3.pt',
-                'large': './large-v3.pt'
+                'tiny': os.path.join(cache_dir, 'tiny.pt'),
+                'base': os.path.join(cache_dir, 'base.pt'),
+                'small': os.path.join(cache_dir, 'small.pt'),
+                'medium': os.path.join(cache_dir, 'medium.pt'),
+                'medium.en': os.path.join(cache_dir, 'medium.en.pt'),
+                'large-v1': os.path.join(cache_dir, 'large-v1.pt'),
+                'base.en': os.path.join(cache_dir, 'base.en.pt'),
+                'small.en': os.path.join(cache_dir, 'small.en.pt'),
+                'tiny.en': os.path.join(cache_dir, 'tiny.en.pt'),
+                'large-v2': os.path.join(cache_dir, 'large-v2.pt'),
+                'large-v3': os.path.join(cache_dir, 'large-v3.pt'),
+                'large': os.path.join(cache_dir, 'large-v3.pt')
             }
-            self.model_path = model_mapping.get(modelsize, f'./{modelsize}.pt')
-        
+            self.model_path = model_mapping.get(modelsize, os.path.join(cache_dir, f'{modelsize}.pt'))
+
         self.model = self.load_model(modelsize)
-        
+
         # Set up tokenizer for translation if needed
         if self.task == "translate":
             self.tokenizer = self.set_translate_task()
@@ -201,11 +204,16 @@ class SimulStreamingASR():
                 init_prompt=self.init_prompt,
                 max_context_tokens=self.max_context_tokens,
                 static_init_prompt=self.static_init_prompt,
-        )   
-        model_name = os.path.basename(self.cfg.model_path).replace(".pt", "")
-        model_path = os.path.dirname(os.path.abspath(self.cfg.model_path))
-        self.whisper_model = load_model(name=model_name, download_root=model_path)
-        
+        )
+        # Check if model file already exists, if so load directly
+        if os.path.isfile(self.cfg.model_path):
+            self.whisper_model = load_model(name=self.cfg.model_path)
+        else:
+            # Download model if not exists
+            model_name = os.path.basename(self.cfg.model_path).replace(".pt", "")
+            model_path = os.path.dirname(os.path.abspath(self.cfg.model_path))
+            self.whisper_model = load_model(name=model_name, download_root=model_path)
+
 
     def set_translate_task(self):
         """Set up translation task."""

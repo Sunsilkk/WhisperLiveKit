@@ -1,4 +1,4 @@
-SIMULSTREAMING_LICENSE = f"""
+SIMULSTREAMING_LICENSE = """
 SimulStreaming backend is dual-licensed:
 • Non-Commercial Use: PolyForm Noncommercial License 1.0.0.
 • Commercial Use: Check SimulStreaming README (github.com/ufal/SimulStreaming) for more details.

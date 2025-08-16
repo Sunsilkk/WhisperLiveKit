@@ -11,12 +11,12 @@ import sys
 class TranscriptionEngine:
     _instance = None
     _initialized = False
-    
+
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self, **kwargs):
         if TranscriptionEngine._initialized:
             return
@@ -69,35 +69,35 @@ class TranscriptionEngine:
             config_dict['transcription'] = not kwargs['no_transcription']
         if 'no_vad' in kwargs:
             config_dict['vad'] = not kwargs['no_vad']
-        
+
         config_dict.pop('no_transcription', None)
         config_dict.pop('no_vad', None)
 
         if 'language' in kwargs:
             config_dict['lan'] = kwargs['language']
-        config_dict.pop('language', None) 
+        config_dict.pop('language', None)
 
         self.args = Namespace(**config_dict)
-        
+
         self.asr = None
         self.tokenizer = None
         self.diarization = None
-        
+
         if self.args.transcription:
-            if self.args.backend == "simulstreaming": 
-                from simul_whisper import SimulStreamingASR
+            if self.args.backend == "simulstreaming":
+                from .simul_whisper import SimulStreamingASR
                 self.tokenizer = None
                 simulstreaming_kwargs = {}
-                for attr in ['frame_threshold', 'beams', 'decoder_type', 'audio_max_len', 'audio_min_len', 
-                            'cif_ckpt_path', 'never_fire', 'init_prompt', 'static_init_prompt', 
+                for attr in ['frame_threshold', 'beams', 'decoder_type', 'audio_max_len', 'audio_min_len',
+                            'cif_ckpt_path', 'never_fire', 'init_prompt', 'static_init_prompt',
                             'max_context_tokens', 'model_path']:
                     if hasattr(self.args, attr):
                         simulstreaming_kwargs[attr] = getattr(self.args, attr)
-        
+
                 # Add segment_length from min_chunk_size
                 simulstreaming_kwargs['segment_length'] = getattr(self.args, 'min_chunk_size', 0.5)
                 simulstreaming_kwargs['task'] = self.args.task
-                
+
                 size = self.args.model
                 self.asr = SimulStreamingASR(
                     modelsize=size,
@@ -118,14 +118,14 @@ class TranscriptionEngine:
                 segmentation_model_name=self.args.segmentation_model,
                 embedding_model_name=self.args.embedding_model
             )
-            
+
         TranscriptionEngine._initialized = True
 
 
 
 def online_factory(args, asr, tokenizer, logfile=sys.stderr):
-    if args.backend == "simulstreaming":    
-        from simul_whisper import SimulStreamingOnlineProcessor
+    if args.backend == "simulstreaming":
+        from .simul_whisper import SimulStreamingOnlineProcessor
         online = SimulStreamingOnlineProcessor(
             asr,
             logfile=logfile,
@@ -149,4 +149,3 @@ def online_factory(args, asr, tokenizer, logfile=sys.stderr):
             confidence_validation = args.confidence_validation
         )
     return online
-  

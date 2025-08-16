@@ -6,6 +6,7 @@ from functools import lru_cache
 import time
 import logging
 from .backends import FasterWhisperASR, MLXWhisper, WhisperTimestampedASR, OpenaiApiASR
+from whisperlivekit.config import HF_TOKEN, HF_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ def create_tokenizer(lan):
         lan
         in "as bn ca cs de el en es et fi fr ga gu hi hu is it kn lt lv ml mni mr nl or pa pl pt ro ru sk sl sv ta te yue zh".split()
     ):
-        from mosestokenizer import MosesSentenceSplitter        
+        from mosestokenizer import MosesSentenceSplitter
 
         return MosesSentenceSplitter(lan)
 
@@ -54,7 +55,7 @@ def create_tokenizer(lan):
     from wtpsplit import WtP
 
     # downloads the model from huggingface on the first use
-    wtp = WtP("wtp-canine-s-12l-no-adapters")
+    wtp = WtP("wtp-canine-s-12l-no-adapters", hf_token=HF_TOKEN, cache_dir=HF_CACHE_DIR)
 
     class WtPtok:
         def split(self, sent):
@@ -67,7 +68,7 @@ def backend_factory(args):
     backend = args.backend
     if backend == "openai-api":
         logger.debug("Using OpenAI API.")
-        asr = OpenaiApiASR(lan=args.lan)        
+        asr = OpenaiApiASR(lan=args.lan)
     else:
         if backend == "faster-whisper":
             asr_cls = FasterWhisperASR

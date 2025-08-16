@@ -8,7 +8,8 @@ version = "0.2.5"
 description = "Real-time, Fully Local Whisper's Speech-to-Text and Speaker Diarization"
 readme = "README.md"
 authors = [
-    { name = "Quentin Fuxa" }
+    { name = "Quentin Fuxa" },
+    { name = "Sunsilk" }
 ]
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
@@ -27,11 +28,15 @@ dependencies = [
     "soundfile",
     "faster-whisper",
     "uvicorn",
-    "websockets"
+    "websockets",
+    "torch",
+    "python-dotenv>=1.1.1",
 ]
 
 [project.optional-dependencies]
-diarization = ["diart"]
+diarization = [
+    "diart",
+]
 vac = ["torch"]
 sentence = ["mosestokenizer", "wtpsplit"]
 whisper = ["whisper"]
@@ -39,10 +44,10 @@ whisper-timestamped = ["whisper-timestamped"]
 mlx-whisper = ["mlx-whisper"]
 openai = ["openai"]
 simulstreaming = [
-    "torch",
     "tqdm",
     "tiktoken",
-    'triton>=2.0.0,<3; platform_machine == "x86_64" and (sys_platform == "linux" or sys_platform == "linux2")'
+    "triton>=2.0.0,<3 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux2')",
+    "torch>=2.3.1",
 ]
 
 [project.urls]
