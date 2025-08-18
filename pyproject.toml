@@ -7,10 +7,7 @@ name = "whisperlivekit"
 version = "0.2.5"
 description = "Real-time, Fully Local Whisper's Speech-to-Text and Speaker Diarization"
 readme = "README.md"
-authors = [
-    { name = "Quentin Fuxa" },
-    { name = "Sunsilk" }
-]
+authors = [{ name = "Quentin Fuxa" }, { name = "Sunsilk" }]
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
 classifiers = [
@@ -20,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Multimedia :: Sound/Audio :: Speech"
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
     "fastapi",
@@ -31,24 +28,19 @@ dependencies = [
     "websockets",
     "torch",
     "python-dotenv>=1.1.1",
-]
-
-[project.optional-dependencies]
-diarization = [
-    "diart",
-]
-vac = ["torch"]
-sentence = ["mosestokenizer", "wtpsplit"]
-whisper = ["whisper"]
-whisper-timestamped = ["whisper-timestamped"]
-mlx-whisper = ["mlx-whisper"]
-openai = ["openai"]
-simulstreaming = [
     "tqdm",
     "tiktoken",
     "triton>=2.0.0,<3 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux2')",
     "torch>=2.3.1",
 ]
+
+[project.optional-dependencies]
+diarization = ["diart"]
+sentence = ["mosestokenizer", "wtpsplit"]
+whisper = ["whisper"]
+whisper-timestamped = ["whisper-timestamped"]
+mlx-whisper = ["mlx-whisper"]
+openai = ["openai"]
 
 [project.urls]
 Homepage = "https://github.com/QuentinFuxa/WhisperLiveKit"
@@ -57,7 +49,16 @@ Homepage = "https://github.com/QuentinFuxa/WhisperLiveKit"
 whisperlivekit-server = "whisperlivekit.basic_server:main"
 
 [tool.setuptools]
-packages = ["whisperlivekit", "whisperlivekit.diarization", "whisperlivekit.simul_whisper", "whisperlivekit.simul_whisper.whisper", "whisperlivekit.simul_whisper.whisper.assets", "whisperlivekit.simul_whisper.whisper.normalizers", "whisperlivekit.web", "whisperlivekit.whisper_streaming_custom"]
+packages = [
+    "whisperlivekit",
+    "whisperlivekit.diarization",
+    "whisperlivekit.simul_whisper",
+    "whisperlivekit.simul_whisper.whisper",
+    "whisperlivekit.simul_whisper.whisper.assets",
+    "whisperlivekit.simul_whisper.whisper.normalizers",
+    "whisperlivekit.web",
+    "whisperlivekit.whisper_streaming_custom",
+]
 
 [tool.setuptools.package-data]
 whisperlivekit = ["web/*.html"]

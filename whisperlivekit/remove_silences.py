@@ -3,6 +3,7 @@ import re
 
 MIN_SILENCE_DURATION = 4 #in seconds
 END_SILENCE_DURATION = 8 #in seconds. you should keep it important to not have false positive when the model lag is important
+END_SILENCE_DURATION_VAC = 3 #VAC is good at detecting silences, but we want to skip the smallest silences
 
 def blank_to_silence(tokens):
     full_string = ''.join([t.text for t in tokens])
@@ -76,11 +77,15 @@ def no_token_to_silence(tokens):
             new_tokens.append(token)
     return new_tokens
             
-def ends_with_silence(tokens, current_time):
+def ends_with_silence(tokens, current_time, vac_detected_silence):
     if not tokens:
         return []
     last_token = tokens[-1]
-    if tokens and current_time - last_token.end >= END_SILENCE_DURATION:
+    if tokens and (
+        current_time - last_token.end >= END_SILENCE_DURATION 
+        or 
+        (current_time - last_token.end >= 3 and vac_detected_silence)
+        ):
         if last_token.speaker == -2:
             last_token.end = current_time
         else:
@@ -95,9 +100,9 @@ def ends_with_silence(tokens, current_time):
     return tokens
     
 
-def handle_silences(tokens, current_time):
+def handle_silences(tokens, current_time, vac_detected_silence):
     tokens = blank_to_silence(tokens) #useful for simulstreaming backend which tends to generate [BLANK_AUDIO] text
     tokens = no_token_to_silence(tokens)
-    tokens = ends_with_silence(tokens, current_time)
+    tokens = ends_with_silence(tokens, current_time, vac_detected_silence)
     return tokens
      

@@ -34,7 +34,7 @@ class TranscriptionEngine:
             "lan": "auto",
             "task": "transcribe",
             "backend": "faster-whisper",
-            "vac": False,
+            "vac": True,
             "vac_chunk_size": 0.04,
             "log_level": "DEBUG",
             "ssl_certfile": None,
@@ -49,7 +49,7 @@ class TranscriptionEngine:
             "frame_threshold": 25,
             "beams": 1,
             "decoder_type": None,
-            "audio_max_len": 30.0,
+            "audio_max_len": 20.0,
             "audio_min_len": 0.0,
             "cif_ckpt_path": None,
             "never_fire": False,
@@ -69,6 +69,8 @@ class TranscriptionEngine:
             config_dict['transcription'] = not kwargs['no_transcription']
         if 'no_vad' in kwargs:
             config_dict['vad'] = not kwargs['no_vad']
+        if 'no_vac' in kwargs:
+            config_dict['vac'] = not kwargs['no_vac']
 
         config_dict.pop('no_transcription', None)
         config_dict.pop('no_vad', None)
@@ -82,6 +84,11 @@ class TranscriptionEngine:
         self.asr = None
         self.tokenizer = None
         self.diarization = None
+        self.vac_model = None
+
+        if self.args.vac:
+            import torch
+            self.vac_model, _ = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad")
 
         if self.args.transcription:
             if self.args.backend == "simulstreaming":
@@ -131,7 +138,7 @@ def online_factory(args, asr, tokenizer, logfile=sys.stderr):
             logfile=logfile,
         )
         # warmup_online(online, args.warmup_file)
-    elif args.vac:
+    elif False: #args.vac: #vac is now handled in audio_processor
         online = VACOnlineASRProcessor(
             args.min_chunk_size,
             asr,

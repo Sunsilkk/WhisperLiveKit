@@ -122,6 +122,7 @@ class OnlineASRProcessor:
         self.tokenize = tokenize_method
         self.logfile = logfile
         self.confidence_validation = confidence_validation
+        self.global_time_offset = 0.0
         self.init()
 
         self.buffer_trimming_way, self.buffer_trimming_sec = buffer_trimming
@@ -151,6 +152,17 @@ class OnlineASRProcessor:
     def insert_audio_chunk(self, audio: np.ndarray, audio_stream_end_time: Optional[float] = None):
         """Append an audio chunk (a numpy array) to the current audio buffer."""
         self.audio_buffer = np.append(self.audio_buffer, audio)
+
+    def insert_silence(self, silence_duration, offset):
+        """
+        If silences are > 5s, we do a complete context clear. Otherwise, we just insert a small silence and shift the last_attend_frame
+        """
+        if silence_duration < 3:
+            gap_silence = np.zeros(int(16000 * silence_duration), dtype=np.int16)
+            self.insert_audio_chunk(gap_silence)
+        else:
+            self.init(offset=silence_duration + offset)
+        self.global_time_offset += silence_duration
 
     def prompt(self) -> Tuple[str, str]:
         """
@@ -230,6 +242,9 @@ class OnlineASRProcessor:
         logger.debug(
             f"Length of audio buffer now: {len(self.audio_buffer)/self.SAMPLING_RATE:.2f} seconds"
         )
+        if self.global_time_offset:
+            for token in committed_tokens:
+                token = token.with_offset(self.global_time_offset)
         return committed_tokens, current_audio_processed_upto
 
     def chunk_completed_sentence(self):
@@ -411,7 +426,7 @@ class VACOnlineASRProcessor:
         # Load a VAD model (e.g. Silero VAD)
         import torch
         model, _ = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad")
-        from .silero_vad_iterator import FixedVADIterator
+        from ..silero_vad_iterator import FixedVADIterator
 
         self.vac = FixedVADIterator(model)
         self.logfile = self.online.logfile

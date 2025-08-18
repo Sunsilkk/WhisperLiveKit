@@ -143,7 +143,7 @@ class FFmpegManager:
         try:
             data = await asyncio.wait_for(
                 self.process.stdout.read(size),
-                timeout=5.0
+                timeout=20.0
             )
             return data
         except asyncio.TimeoutError:

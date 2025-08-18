@@ -30,3 +30,7 @@ class SpeakerSegment(TimedText):
     No text nor probability is associated with this segment.
     """
     pass
+
+@dataclass
+class Silence():
+    duration: float

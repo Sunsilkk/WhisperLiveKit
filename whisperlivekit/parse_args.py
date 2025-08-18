@@ -112,10 +112,10 @@ def parse_args():
         help="Load only this backend for Whisper processing.",
     )
     parser.add_argument(
-        "--vac",
+        "--no-vac",
         action="store_true",
         default=False,
-        help="Use VAC = voice activity controller. Recommended. Requires torch.",
+        help="Disable VAC = voice activity controller.",
     )
     parser.add_argument(
         "--vac-chunk-size", type=float, default=0.04, help="VAC sample size in seconds."

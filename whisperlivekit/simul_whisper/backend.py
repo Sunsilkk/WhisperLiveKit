@@ -8,6 +8,8 @@ from whisperlivekit.config import WHISPER_CACHE_DIR
 from whisperlivekit.warmup import load_file
 from .license_simulstreaming import SIMULSTREAMING_LICENSE
 from .whisper import load_model, tokenizer
+from .whisper.audio import TOKENS_PER_SECOND
+
 import os
 import gc
 logger = logging.getLogger(__name__)
@@ -22,6 +24,8 @@ except ImportError as e:
         """SimulStreaming dependencies are not available.
         Please install WhisperLiveKit using pip install "whisperlivekit[simulstreaming]".""")
 
+# TOO_MANY_REPETITIONS = 3
+
 class SimulStreamingOnlineProcessor:
     SAMPLING_RATE = 16000
 
@@ -34,20 +38,37 @@ class SimulStreamingOnlineProcessor:
         self.asr = asr
         self.logfile = logfile
         self.is_last = False
-        self.beg = 0.0
         self.end = 0.0
         self.cumulative_audio_duration = 0.0
+        self.global_time_offset = 0.0
 
         self.committed: List[ASRToken] = []
         self.last_result_tokens: List[ASRToken] = []
-        model = asr.get_new_model_instance()
-        self.model = PaddedAlignAttWhisper(
-            cfg=asr.cfg,
-            loaded_model=model)
+        self.load_new_backend()
         if asr.tokenizer:
             self.model.tokenizer = asr.tokenizer
 
-    def insert_audio_chunk(self, audio: np.ndarray, audio_stream_end_time: Optional[float] = None):
+    def load_new_backend(self):
+        model = self.asr.get_new_model_instance()
+        self.model = PaddedAlignAttWhisper(
+            cfg=self.asr.cfg,
+            loaded_model=model)
+
+    def insert_silence(self, silence_duration, offset):
+        """
+        If silences are > 5s, we do a complete context clear. Otherwise, we just insert a small silence and shift the last_attend_frame
+        """
+        if silence_duration < 5:
+            gap_silence = torch.zeros(int(16000*min(silence_duration, 1.0)))
+            self.model.insert_audio(gap_silence)
+            self.global_time_offset = silence_duration - 1.0
+        else:
+            self.model.refresh_segment(complete=True)
+            self.global_time_offset += silence_duration
+
+
+
+    def insert_audio_chunk(self, audio: np.ndarray, audio_stream_end_time):
         """Append an audio chunk to be processed by SimulStreaming."""
 
         # Convert numpy array to torch tensor
@@ -72,29 +93,54 @@ class SimulStreamingOnlineProcessor:
         )
 
     def timestamped_text(self, tokens, generation):
-        # From the simulstreaming repo. self.model to self.asr.model
-        pr = generation["progress"]
-        if "result" not in generation:
-            split_words, split_tokens = self.model.tokenizer.split_to_word_tokens(tokens)
-        else:
-            split_words, split_tokens = generation["result"]["split_words"], generation["result"]["split_tokens"]
+        """
+        generate timestamped text from tokens and generation data.
 
-        frames = [p["most_attended_frames"][0] for p in pr]
-        tokens = tokens.copy()
-        ret = []
-        for sw,st in zip(split_words,split_tokens):
-            b = None
-            for stt in st:
-                t,f = tokens.pop(0), frames.pop(0)
-                if t != stt:
-                    raise ValueError(f"Token mismatch: {t} != {stt} at frame {f}.")
-                if b is None:
-                    b = f
-            e = f
-            out = (b*0.02, e*0.02, sw)
-            ret.append(out)
-            logger.debug(f"TS-WORD:\t{' '.join(map(str, out))}")
-        return ret
+        args:
+            tokens: List of tokens to process
+            generation: Dictionary containing generation progress and optionally results
+
+        returns:
+            List of tuples containing (start_time, end_time, word) for each word
+        """
+        FRAME_DURATION = 0.02
+        if "result" in generation:
+            split_words = generation["result"]["split_words"]
+            split_tokens = generation["result"]["split_tokens"]
+        else:
+            split_words, split_tokens = self.model.tokenizer.split_to_word_tokens(tokens)
+        progress = generation["progress"]
+        frames = [p["most_attended_frames"][0] for p in progress]
+        absolute_timestamps = [p["absolute_timestamps"][0] for p in progress]
+        tokens_queue = tokens.copy()
+        timestamped_words = []
+
+        for word, word_tokens in zip(split_words, split_tokens):
+            # start_frame = None
+            # end_frame = None
+            for expected_token in word_tokens:
+                if not tokens_queue or not frames:
+                    raise ValueError(f"Insufficient tokens or frames for word '{word}'")
+
+                actual_token = tokens_queue.pop(0)
+                current_frame = frames.pop(0)
+                current_timestamp = absolute_timestamps.pop(0)
+                if actual_token != expected_token:
+                    raise ValueError(
+                        f"Token mismatch: expected '{expected_token}', "
+                        f"got '{actual_token}' at frame {current_frame}"
+                    )
+                # if start_frame is None:
+                #     start_frame = current_frame
+                # end_frame = current_frame
+            # start_time = start_frame * FRAME_DURATION
+            # end_time = end_frame * FRAME_DURATION
+            start_time = current_timestamp
+            end_time = current_timestamp + 0.1
+            timestamp_entry = (start_time, end_time, word)
+            timestamped_words.append(timestamp_entry)
+            logger.debug(f"TS-WORD:\t{start_time:.2f}\t{end_time:.2f}\t{word}")
+        return timestamped_words
 
     def process_iter(self) -> Tuple[List[ASRToken], float]:
         """
@@ -115,9 +161,31 @@ class SimulStreamingOnlineProcessor:
                     end=end,
                     text=word,
                     probability=0.95  # fake prob. Maybe we can extract it from the model?
+                ).with_offset(
+                    self.global_time_offset
                 )
                 new_tokens.append(token)
-                self.committed.extend(new_tokens)
+
+            # identical_tokens = 0
+            # n_new_tokens = len(new_tokens)
+            # if n_new_tokens:
+
+            self.committed.extend(new_tokens)
+
+            # if token in self.committed:
+            #     pos = len(self.committed) - 1 - self.committed[::-1].index(token)
+            # if pos:
+            #     for i in range(len(self.committed) - n_new_tokens, -1, -n_new_tokens):
+            #         commited_segment = self.committed[i:i+n_new_tokens]
+            #         if commited_segment == new_tokens:
+            #             identical_segments +=1
+            #             if identical_tokens >= TOO_MANY_REPETITIONS:
+            #                 logger.warning('Too many repetition, model is stuck. Load a new one')
+            #                 self.committed = self.committed[:i]
+            #                 self.load_new_backend()
+            #                 return [], self.end
+
+            # pos = self.committed.rindex(token)
 
             return new_tokens, self.end
 
@@ -138,10 +206,11 @@ class SimulStreamingOnlineProcessor:
 
     def __del__(self):
         # free the model and add a new model to stack.
-        del self.model
+        # del self.model
         gc.collect()
         torch.cuda.empty_cache()
-        self.asr.new_model_to_stack()
+        # self.asr.new_model_to_stack()
+        self.model.remove_hooks()
 
 class SimulStreamingASR():
     """SimulStreaming backend with AlignAtt policy."""
@@ -155,7 +224,7 @@ class SimulStreamingASR():
 
         self.model_path = kwargs.get('model_path', './large-v3.pt')
         self.frame_threshold = kwargs.get('frame_threshold', 25)
-        self.audio_max_len = kwargs.get('audio_max_len', 30.0)
+        self.audio_max_len = kwargs.get('audio_max_len', 20.0)
         self.audio_min_len = kwargs.get('audio_min_len', 0.0)
         self.segment_length = kwargs.get('segment_length', 0.5)
         self.beams = kwargs.get('beams', 1)
@@ -237,6 +306,7 @@ class SimulStreamingASR():
             self.models.append(self.load_model())
         new_model = self.models.pop()
         return new_model
+        # self.models[0]
 
     def new_model_to_stack(self):
         self.models.append(self.load_model())
