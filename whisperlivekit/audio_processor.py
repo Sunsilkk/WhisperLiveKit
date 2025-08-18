@@ -9,7 +9,7 @@ from whisperlivekit.timed_objects import ASRToken, Silence
 from whisperlivekit.core import TranscriptionEngine, online_factory
 from whisperlivekit.ffmpeg_manager import FFmpegManager, FFmpegState
 from .remove_silences import handle_silences
-from .trail_repetition import trim_tail_repetition
+# from .trail_repetition import trim_tail_repetition  # unused import
 from .silero_vad_iterator import FixedVADIterator
 # Set up logging once
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -77,7 +77,7 @@ class AudioProcessor:
             channels=self.channels
         )
 
-        async def handle_ffmpeg_error(error_type: str):
+        def handle_ffmpeg_error(error_type: str):
             logger.error(f"FFmpeg error: {error_type}")
             self._ffmpeg_error = error_type
 
@@ -225,7 +225,7 @@ class AudioProcessor:
                     end_of_audio = False
                     silence_buffer = None
 
-                    if self.args.vac:
+                    if self.args.vac and self.vac is not None:
                         res = self.vac(pcm_array)
 
                     if self.silence:
@@ -401,7 +401,7 @@ class AudioProcessor:
             except Exception as e:
                 logger.warning(f"Exception in diarization_processor: {e}")
                 logger.warning(f"Traceback: {traceback.format_exc()}")
-                if 'pcm_array' in locals() and pcm_array is not SENTINEL:
+                if 'pcm_array' in locals() and locals().get('pcm_array') is not SENTINEL:
                     self.diarization_queue.task_done()
         logger.info("Diarization processor task finished.")
 

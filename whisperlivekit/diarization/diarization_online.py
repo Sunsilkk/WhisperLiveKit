@@ -11,15 +11,15 @@ from diart.inference import StreamingInference
 from diart.sources import AudioSource
 from whisperlivekit.timed_objects import SpeakerSegment
 from diart.sources import MicrophoneAudioSource
-from rx.core import Observer
+from rx.core.observer.observer import Observer
 from typing import Tuple, Any, List
 from pyannote.core import Annotation
 import diart.models as m
-from whisperlivekit.config import HF_TOKEN, HF_CACHE_DIR
+from whisperlivekit.config import HF_TOKEN
 
 logger = logging.getLogger(__name__)
 
-def extract_number(s: str) -> int:
+def extract_number(s: str) -> int | None:
     m = re.search(r'\d+', s)
     return int(m.group()) if m else None
 
@@ -48,11 +48,27 @@ class DiarizationObserver(Observer):
                 for speaker, label in annotation._labels.items():
                     for start, end in zip(label.segments_boundaries_[:-1], label.segments_boundaries_[1:]):
                         print(f"  {speaker}: {start:.2f}s-{end:.2f}s")
-                        self.speaker_segments.append(SpeakerSegment(
-                            speaker=speaker,
-                            start=start,
-                            end=end
-                        ))
+                        # Convert speaker label to int and ensure start/end are floats
+                        speaker_id = extract_number(str(speaker)) if speaker else None
+                        # Ensure start/end are scalar values, not lists
+                        start_val = start
+                        end_val = end
+                        
+                        # Handle nested lists/arrays by extracting scalar values
+                        while isinstance(start_val, (list, np.ndarray)) and len(start_val) > 0:
+                            start_val = start_val[0]
+                        while isinstance(end_val, (list, np.ndarray)) and len(end_val) > 0:
+                            end_val = end_val[0]
+                        
+                        # Ensure we have numeric values before converting to float
+                        if isinstance(start_val, (int, float, np.number)) and isinstance(end_val, (int, float, np.number)):
+                            self.speaker_segments.append(SpeakerSegment(
+                                speaker=speaker_id,
+                                start=float(start_val),
+                                end=float(end_val)
+                            ))
+                        else:
+                            logger.warning(f"Invalid start/end values: start={start_val}, end={end_val}")
             else:
                 logger.debug("\nNo speakers detected in this segment")
 
@@ -166,7 +182,7 @@ class WebSocketAudioSource(AudioSource):
 
 
 class DiartDiarization:
-    def __init__(self, sample_rate: int = 16000, config : SpeakerDiarizationConfig = None, use_microphone: bool = False, block_duration: float = 1.5, segmentation_model_name: str = "pyannote/segmentation-3.0", embedding_model_name: str = "pyannote/embedding"):
+    def __init__(self, sample_rate: int = 16000, config: SpeakerDiarizationConfig | None = None, use_microphone: bool = False, block_duration: float = 1.5, segmentation_model_name: str = "pyannote/segmentation-3.0", embedding_model_name: str = "pyannote/embedding"):
         segmentation_model = m.SegmentationModel.from_pretrained(segmentation_model_name, use_hf_token=HF_TOKEN)
         embedding_model = m.EmbeddingModel.from_pretrained(embedding_model_name, use_hf_token=HF_TOKEN)
 
@@ -214,7 +230,7 @@ class DiartDiarization:
         if self.custom_source:
             self.custom_source.close()
 
-    def assign_speakers_to_tokens(self, tokens: list, use_punctuation_split: bool = False) -> float:
+    def assign_speakers_to_tokens(self, tokens: list, use_punctuation_split: bool = False) -> list:
         """
         Assign speakers to tokens based on timing overlap with speaker segments.
         Uses the segments collected by the observer.
@@ -236,7 +252,8 @@ class DiartDiarization:
             for token in tokens:
                 for segment in segments:
                     if not (segment.end <= token.start + self.lag_diart or segment.start >= token.end + self.lag_diart):
-                        token.speaker = extract_number(segment.speaker) + 1
+                        speaker_num = extract_number(str(segment.speaker))
+                        token.speaker = (speaker_num + 1) if speaker_num is not None else 1
         else:
             tokens = add_speaker_to_tokens(segments, tokens)
         return tokens
@@ -244,7 +261,8 @@ class DiartDiarization:
 def concatenate_speakers(segments):
     segments_concatenated = [{"speaker": 1, "begin": 0.0, "end": 0.0}]
     for segment in segments:
-        speaker = extract_number(segment.speaker) + 1
+        speaker_num = extract_number(str(segment.speaker))
+        speaker = (speaker_num + 1) if speaker_num is not None else 1
         if segments_concatenated[-1]['speaker'] != speaker:
             segments_concatenated.append({"speaker": speaker, "begin": segment.start, "end": segment.end})
         else:

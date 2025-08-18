@@ -1,14 +1,12 @@
 import sys
 import numpy as np
 import logging
-from typing import List, Tuple, Optional
-import logging
+from typing import List, Tuple
 from whisperlivekit.timed_objects import ASRToken, Transcript
 from whisperlivekit.config import WHISPER_CACHE_DIR
 from whisperlivekit.warmup import load_file
 from .license_simulstreaming import SIMULSTREAMING_LICENSE
-from .whisper import load_model, tokenizer
-from .whisper.audio import TOKENS_PER_SECOND
+from .whisper import load_model
 
 import os
 import gc
@@ -19,7 +17,7 @@ try:
     from .config import AlignAttConfig
     from .simul_whisper import PaddedAlignAttWhisper
     from .whisper import tokenizer
-except ImportError as e:
+except ImportError:
     raise ImportError(
         """SimulStreaming dependencies are not available.
         Please install WhisperLiveKit using pip install "whisperlivekit[simulstreaming]".""")
@@ -149,7 +147,11 @@ class SimulStreamingOnlineProcessor:
         Returns a tuple: (list of committed ASRToken objects, float representing the audio processed up to time).
         """
         try:
+            logger.debug(f"SimulStreaming process_iter - is_last: {self.is_last}")
+            logger.debug(f"SimulStreaming process_iter - About to call model.infer()")
             tokens, generation_progress = self.model.infer(is_last=self.is_last)
+            logger.debug(f"SimulStreaming process_iter - model.infer() completed successfully")
+            logger.debug(f"SimulStreaming process_iter - tokens type: {type(tokens)}, generation_progress type: {type(generation_progress)}")
             ts_words = self.timestamped_text(tokens, generation_progress)
 
             new_tokens = []

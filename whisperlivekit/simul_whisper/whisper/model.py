@@ -234,11 +234,75 @@ class TextDecoder(nn.Module):
         xa : torch.Tensor, shape = (batch_size, n_audio_ctx, n_audio_state)
             the encoded audio features to be attended on
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Debug logging for tensor shapes
+        logger.debug(f"TextDecoder.forward - Input x shape: {x.shape}, dtype: {x.dtype}")
+        logger.debug(f"TextDecoder.forward - Input xa shape: {xa.shape}, dtype: {xa.dtype}")
+        logger.debug(f"TextDecoder.forward - token_embedding weight shape: {self.token_embedding.weight.shape}")
+        logger.debug(f"TextDecoder.forward - positional_embedding shape: {self.positional_embedding.shape}")
+        
         offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
-        x = (
-            self.token_embedding(x)
-            + self.positional_embedding[offset : offset + x.shape[-1]]
-        )
+        logger.debug(f"TextDecoder.forward - offset: {offset}, x.shape[-1]: {x.shape[-1]}")
+        
+        # Check tensor dimensions before token embedding
+        if len(x.shape) != 2:
+            logger.error(f"Expected x to be 2D tensor, got shape: {x.shape}")
+            raise RuntimeError(f"Input tensor x has invalid shape: {x.shape}. Expected 2D tensor.")
+            
+        try:
+            token_emb = self.token_embedding(x)
+            logger.debug(f"TextDecoder.forward - token_embedding output shape: {token_emb.shape}")
+        except Exception as e:
+            logger.error(f"Error in token_embedding: {e}")
+            logger.error(f"x shape: {x.shape}, x content: {x}")
+            raise
+            
+        # Validate positional embedding slice bounds
+        seq_len = x.shape[-1]
+        pos_emb_len = self.positional_embedding.shape[0]
+        end_pos = offset + seq_len
+        
+        if end_pos > pos_emb_len:
+            logger.warning(f"Positional embedding slice out of bounds: offset={offset}, seq_len={seq_len}, end_pos={end_pos}, pos_emb_len={pos_emb_len}")
+            # Clamp to available range
+            if offset >= pos_emb_len:
+                # If offset is beyond bounds, use the last available position
+                offset = pos_emb_len - seq_len if pos_emb_len >= seq_len else 0
+                end_pos = offset + seq_len
+            if end_pos > pos_emb_len:
+                # If still out of bounds, truncate sequence length
+                seq_len = pos_emb_len - offset
+                end_pos = pos_emb_len
+                logger.warning(f"Truncating sequence length to {seq_len} to fit positional embedding")
+        
+        pos_emb_slice = self.positional_embedding[offset : end_pos]
+        logger.debug(f"TextDecoder.forward - positional_embedding slice shape: {pos_emb_slice.shape}")
+        
+        # Ensure positional embedding matches token embedding dimensions
+        if pos_emb_slice.shape[0] != seq_len:
+            logger.warning(f"Positional embedding length mismatch: expected {seq_len}, got {pos_emb_slice.shape[0]}")
+            # Pad or truncate positional embedding to match
+            if pos_emb_slice.shape[0] < seq_len:
+                # Pad with zeros
+                pad_size = seq_len - pos_emb_slice.shape[0]
+                padding = torch.zeros(pad_size, pos_emb_slice.shape[1], device=pos_emb_slice.device, dtype=pos_emb_slice.dtype)
+                pos_emb_slice = torch.cat([pos_emb_slice, padding], dim=0)
+            else:
+                # Truncate
+                pos_emb_slice = pos_emb_slice[:seq_len]
+            logger.debug(f"TextDecoder.forward - adjusted positional_embedding slice shape: {pos_emb_slice.shape}")
+        
+        # Ensure token embedding is truncated to match positional embedding if needed
+        if token_emb.shape[1] != pos_emb_slice.shape[0]:
+            logger.warning(f"Token embedding sequence length mismatch: token_emb={token_emb.shape[1]}, pos_emb={pos_emb_slice.shape[0]}")
+            min_len = min(token_emb.shape[1], pos_emb_slice.shape[0])
+            token_emb = token_emb[:, :min_len, :]
+            pos_emb_slice = pos_emb_slice[:min_len, :]
+            logger.debug(f"TextDecoder.forward - adjusted token_emb shape: {token_emb.shape}, pos_emb shape: {pos_emb_slice.shape}")
+        
+        x = token_emb + pos_emb_slice
         x = x.to(xa.dtype)
 
         for block in self.blocks:

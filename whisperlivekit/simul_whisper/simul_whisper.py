@@ -242,19 +242,36 @@ class PaddedAlignAttWhisper:
     def _current_tokens(self):
 
         toks = self.tokens
+        logger.debug(f"_current_tokens - Initial toks length: {len(toks)}")
+        for i, tok in enumerate(toks):
+            logger.debug(f"_current_tokens - toks[{i}] shape: {tok.shape}, dtype: {tok.dtype}")
+        
         # very first infer: duplicate start of seq to beam_size
         if toks[0].shape[0] == 1:
+            logger.debug(f"_current_tokens - Duplicating start seq to beam_size: {self.cfg.beam_size}")
             toks[0] = toks[0].repeat_interleave(self.cfg.beam_size,dim=0)
+            logger.debug(f"_current_tokens - After duplication, toks[0] shape: {toks[0].shape}")
 
         if not self.context.is_empty():
+            logger.debug("_current_tokens - Adding context tokens")
             context_toks = self.context.as_tensor_beam(self.cfg.beam_size, device=self.model.device)
+            logger.debug(f"_current_tokens - context_toks shape: {context_toks.shape}")
             toks = [context_toks] + toks
+            logger.debug(f"_current_tokens - After adding context, toks length: {len(toks)}")
 
         # make it one tensor
         if len(toks) > 1:
+            logger.debug("_current_tokens - Concatenating multiple token tensors")
+            for i, tok in enumerate(toks):
+                logger.debug(f"_current_tokens - Before cat, toks[{i}] shape: {tok.shape}")
             current_tokens = torch.cat(toks, dim=1)
+            logger.debug(f"_current_tokens - After concatenation shape: {current_tokens.shape}")
         else:
+            logger.debug("_current_tokens - Using single token tensor")
             current_tokens = toks[0]
+            logger.debug(f"_current_tokens - Single tensor shape: {current_tokens.shape}")
+            
+        logger.debug(f"_current_tokens - Final current_tokens shape: {current_tokens.shape}, dtype: {current_tokens.dtype}")
         logger.debug("debug print current_tokens:")
         self.debug_print_tokens(current_tokens)
         return current_tokens
@@ -280,6 +297,15 @@ class PaddedAlignAttWhisper:
 
     def insert_audio(self, segment=None):
         if segment is not None:
+            # Convert numpy array to tensor if needed
+            if isinstance(segment, np.ndarray):
+                segment = torch.from_numpy(segment).float()
+            elif not isinstance(segment, torch.Tensor):
+                segment = torch.tensor(segment, dtype=torch.float32)
+            
+            # Ensure segment is on the correct device
+            segment = segment.to(self.model.device)
+            logger.debug(f"insert_audio - segment shape: {segment.shape}, dtype: {segment.dtype}, device: {segment.device}")
             self.segments.append(segment)
 
         removed_len = 0
