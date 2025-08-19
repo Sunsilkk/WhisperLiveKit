@@ -64,20 +64,19 @@ pip install whisperlivekit
 
 3. **Start speaking** and watch your words appear in real-time!
 
-> For production use or HTTPS requirements, see the [Parameters](#parameters) section for SSL configuration options.
+> For HTTPS requirements, see the **Parameters** section for SSL configuration options.
 
 #### Optional Dependencies
 
-```bash
+| Optional | `pip install` |
+|-----------|-------------|
+| Speaker diarization | `whisperlivekit[diarization]` |
+| Original Whisper backend | `whisperlivekit[whisper]` |
+| Improved timestamps backend | `whisperlivekit[whisper-timestamped]` |
+| Apple Silicon optimization backend | `whisperlivekit[mlx-whisper]` |
+| OpenAI API backend | `whisperlivekit[openai]` |
 
-pip install whisperlivekit[diarization] # Speaker diarization
-
-# Alternative Whisper backends (default is faster-whisper)
-pip install whisperlivekit[whisper]              # Original Whisper
-pip install whisperlivekit[whisper-timestamped]  # Improved timestamps
-pip install whisperlivekit[mlx-whisper]          # Apple Silicon optimization
-pip install whisperlivekit[openai]               # OpenAI API
-```
+See  **Parameters & Configuration** below on how to use them.
 
  
 > **Pyannote Models Setup** For diarization, you need access to pyannote.audio models:
@@ -96,11 +95,11 @@ pip install whisperlivekit[openai]               # OpenAI API
 Start the transcription server with various options:
 
 ```bash
-# Advanced configuration with diarization
-whisperlivekit-server --host 0.0.0.0 --port 8000 --model medium --diarization --language auto
-
 # SimulStreaming backend for ultra-low latency
-whisperlivekit-server --backend simulstreaming --model large-v3 --frame-threshold 20
+whisperlivekit-server --backend simulstreaming --model large-v3
+
+# Advanced configuration with diarization
+whisperlivekit-server --host 0.0.0.0 --port 8000 --model medium --diarization --language fr
 ```
 
 
@@ -145,41 +144,34 @@ async def websocket_endpoint(websocket: WebSocket):
 
 #### Frontend Implementation
 
-The package includes an HTML/JavaScript implementation [here](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/whisperlivekit/web/live_transcription.html)
+The package includes an HTML/JavaScript implementation [here](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/whisperlivekit/web/live_transcription.html). You can also import it using `from whisperlivekit import get_web_interface_html` & `page = get_web_interface_html()`
 
-```python
-from whisperlivekit import get_web_interface_html #You can also import it in your code
-html_content = get_web_interface_html()
-```
 
-### ⚙️ Configuration Reference
-
-WhisperLiveKit offers extensive configuration options:
+### ⚙️ Parameters & Configuration
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `--host` | Server host address | `localhost` |
 | `--port` | Server port | `8000` |
-| `--model` | Whisper model size. Caution : '.en' models do not work with Simulstreaming | `tiny` |
+| `--ssl-certfile` | Path to the SSL certificate file (for HTTPS support) | `None` |
+| `--ssl-keyfile` | Path to the SSL private key file (for HTTPS support) | `None` |
+| `--model` | Whisper model size. | `tiny` |
 | `--language` | Source language code or `auto` | `en` |
 | `--task` | `transcribe` or `translate` | `transcribe` |
 | `--backend` | Processing backend | `faster-whisper` |
-| `--diarization` | Enable speaker identification | `False` |
-| `--punctuation-split` | Use punctuation to improve speaker boundaries | `True` |
-| `--confidence-validation` | Use confidence scores for faster validation | `False` |
 | `--min-chunk-size` | Minimum audio chunk size (seconds) | `1.0` |
 | `--no-vac` | Disable Voice Activity Controller | `False` |
 | `--no-vad` | Disable Voice Activity Detection | `False` |
-| `--buffer_trimming` | Buffer trimming strategy (`sentence` or `segment`) | `segment` |
 | `--warmup-file` | Audio file path for model warmup | `jfk.wav` |
-| `--ssl-certfile` | Path to the SSL certificate file (for HTTPS support) | `None` |
-| `--ssl-keyfile` | Path to the SSL private key file (for HTTPS support) | `None` |
-| `--segmentation-model` | Hugging Face model ID for pyannote.audio segmentation model. [Available models](https://github.com/juanmc2005/diart/tree/main?tab=readme-ov-file#pre-trained-models) | `pyannote/segmentation-3.0` |
-| `--embedding-model` | Hugging Face model ID for pyannote.audio embedding model. [Available models](https://github.com/juanmc2005/diart/tree/main?tab=readme-ov-file#pre-trained-models) | `speechbrain/spkrec-ecapa-voxceleb` |
 
-**SimulStreaming-specific Options:**
 
-| Parameter | Description | Default |
+| WhisperStreaming backend options | Description | Default |
+|-----------|-------------|---------|
+| `--confidence-validation` | Use confidence scores for faster validation | `False` |
+| `--buffer_trimming` | Buffer trimming strategy (`sentence` or `segment`) | `segment` |
+
+
+| SimulStreaming backend options | Description | Default |
 |-----------|-------------|---------|
 | `--frame-threshold` | AlignAtt frame threshold (lower = faster, higher = more accurate) | `25` |
 | `--beams` | Number of beams for beam search (1 = greedy decoding) | `1` |
@@ -194,17 +186,20 @@ WhisperLiveKit offers extensive configuration options:
 | `--model-path` | Direct path to .pt model file. Download it if not found | `./base.pt` |
 | `--preloaded-model-count` | Optional. Number of models to preload in memory to speed up loading (set up to the expected number of concurrent users) | `1` |
 
+| Diarization options | Description | Default |
+|-----------|-------------|---------|
+| `--diarization` | Enable speaker identification | `False` |
+| `--punctuation-split` | Use punctuation to improve speaker boundaries | `True` |
+| `--segmentation-model` | Hugging Face model ID for pyannote.audio segmentation model. [Available models](https://github.com/juanmc2005/diart/tree/main?tab=readme-ov-file#pre-trained-models) | `pyannote/segmentation-3.0` |
+| `--embedding-model` | Hugging Face model ID for pyannote.audio embedding model. [Available models](https://github.com/juanmc2005/diart/tree/main?tab=readme-ov-file#pre-trained-models) | `speechbrain/spkrec-ecapa-voxceleb` |
 
 ### 🚀 Deployment Guide
 
 To deploy WhisperLiveKit in production:
-
-1. **Server Setup** (Backend):
+ 
+1. **Server Setup**: Install production ASGI server & launch with multiple workers
    ```bash
-   # Install production ASGI server
    pip install uvicorn gunicorn
-
-   # Launch with multiple workers
    gunicorn -k uvicorn.workers.UvicornWorker -w 4 your_app:app
    ```
 
@@ -215,12 +210,11 @@ To deploy WhisperLiveKit in production:
    server {
        listen 80;
        server_name your-domain.com;
-
-    location / {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
+        location / {
+            proxy_pass http://localhost:8000;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
     }}
     ```
 
@@ -228,18 +222,17 @@ To deploy WhisperLiveKit in production:
 
 ### 🐋 Docker
 
-A basic Dockerfile is provided which allows re-use of Python package installation options. ⚠️ For **large** models, ensure that your **docker runtime** has enough **memory** available. See below usage examples:
+A Dockerfile is provided which allows re-use of Python package installation options. Create a reusable image with only the basics and then run as a named container:
 
+```bash
+docker build -t whisperlivekit-defaults .
+docker create --gpus all --name whisperlivekit -p 8000:8000 whisperlivekit-defaults --model base
+docker start -i whisperlivekit
+```
 
-#### All defaults
-- Create a reusable image with only the basics and then run as a named container:
-    ```bash
-    docker build -t whisperlivekit-defaults .
-    docker create --gpus all --name whisperlivekit -p 8000:8000 whisperlivekit-defaults --model base
-    docker start -i whisperlivekit
-    ```
+> **Note**: For **large** models, ensure that your **docker runtime** has enough **memory** available
 
-    > **Note**: If you're running on a system without NVIDIA GPU support (such as Mac with Apple Silicon or any system without CUDA capabilities), you need to **remove the `--gpus all` flag** from the `docker create` command. Without GPU acceleration, transcription will use CPU only, which may be significantly slower. Consider using small models for better performance on CPU-only systems.
+> **Note**: If you're running on a system without NVIDIA GPU support (such as Mac with Apple Silicon or any system without CUDA capabilities), you need to **remove the `--gpus all` flag** from the `docker create` command. Without GPU acceleration, transcription will use CPU only, which may be significantly slower. Consider using small models for better performance on CPU-only systems.
 
 #### Customization
 
@@ -248,5 +241,5 @@ A basic Dockerfile is provided which allows re-use of Python package installatio
   - `HF_PRECACHE_DIR="./.cache/"` - Pre-load a model cache for faster first-time start
   - `HF_TKN_FILE="./token"` - Add your Hugging Face Hub access token to download gated models
 
-#### 🔮 Use Cases
+## 🔮 Use Cases
 Capture discussions in real-time for meeting transcription, help hearing-impaired users follow conversations through accessibility tools, transcribe podcasts or videos automatically for content creation, transcribe support calls with speaker identification for customer service...

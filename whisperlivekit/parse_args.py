@@ -59,6 +59,14 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--diarization-backend",
+        type=str,
+        default="sortformer",
+        choices=["sortformer", "diart"],
+        help="The diarization backend to use.",
+    )
+
+    parser.add_argument(
         "--no-transcription",
         action="store_true",
         help="Disable transcription to only see live diarization results.",

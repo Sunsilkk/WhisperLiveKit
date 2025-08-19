@@ -8,9 +8,9 @@ from datetime import timedelta
 from whisperlivekit.timed_objects import ASRToken, Silence
 from whisperlivekit.core import TranscriptionEngine, online_factory
 from whisperlivekit.ffmpeg_manager import FFmpegManager, FFmpegState
-from .remove_silences import handle_silences
-# from .trail_repetition import trim_tail_repetition  # unused import
-from .silero_vad_iterator import FixedVADIterator
+from whisperlivekit.remove_silences import handle_silences
+from whisperlivekit.trail_repetition import trim_tail_repetition
+from whisperlivekit.silero_vad_iterator import FixedVADIterator
 # Set up logging once
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -227,10 +227,6 @@ class AudioProcessor:
 
                     if self.args.vac and self.vac is not None:
                         res = self.vac(pcm_array)
-
-                    if self.silence:
-                        print('NO AUDIO')
-
                     if res is not None:
                         if res.get('end', 0) > res.get('start', 0):
                             end_of_audio = True
@@ -370,6 +366,7 @@ class AudioProcessor:
     async def diarization_processor(self, diarization_obj):
         """Process audio chunks for speaker diarization."""
         buffer_diarization = ""
+        cumulative_pcm_duration_stream_time = 0.0
 
         while True:
             try:
@@ -382,21 +379,23 @@ class AudioProcessor:
                         self.diarization_queue.task_done()
                     break
 
-                # Skip Silence objects for diarization (diarization doesn't need silence handling)
                 if type(item) is Silence:
+                    cumulative_pcm_duration_stream_time += item.duration
+                    # self.diarization_obj.insert_silence(item.duration, self.tokens[-1].end)
                     if self.diarization_queue:
                         self.diarization_queue.task_done()
                     continue
 
-                # Process diarization with audio data only
                 if isinstance(item, np.ndarray):
-                    await diarization_obj.diarize(item)
+                    pcm_array = item
                 else:
                     logger.warning(f"Diarization processor received unexpected item type: {type(item)}")
                     if self.diarization_queue:
                         self.diarization_queue.task_done()
                     continue
 
+                # Process diarization
+                await diarization_obj.diarize(pcm_array)
                 async with self.lock:
                     self.tokens = diarization_obj.assign_speakers_to_tokens(
                         self.tokens,

@@ -47,7 +47,7 @@ async def handle_websocket_results(websocket, results_generator):
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected while handling results (client likely closed connection).")
     except Exception as e:
-        logger.warning(f"Error in WebSocket results handler: {e}")
+        logger.error(f"Error in WebSocket results handler: {e}")
 
 
 @app.websocket("/asr")
