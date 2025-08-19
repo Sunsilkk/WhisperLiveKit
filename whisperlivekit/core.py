@@ -4,7 +4,7 @@ try:
 except ImportError:
     from .whisper_streaming_custom.whisper_online import backend_factory
     from .whisper_streaming_custom.online_asr import VACOnlineASRProcessor, OnlineASRProcessor
-from whisperlivekit.warmup import warmup_asr, warmup_online
+from whisperlivekit.warmup import warmup_asr
 from argparse import Namespace
 import sys
 
@@ -88,7 +88,11 @@ class TranscriptionEngine:
 
         if self.args.vac:
             import torch
-            self.vac_model, _ = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad")
+            vac_result = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad")
+            if isinstance(vac_result, tuple):
+                self.vac_model, _ = vac_result
+            else:
+                self.vac_model = vac_result
 
         if self.args.transcription:
             if self.args.backend == "simulstreaming":
