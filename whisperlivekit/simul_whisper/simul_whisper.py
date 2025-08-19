@@ -10,23 +10,21 @@ from .whisper import load_model, DecodingOptions, tokenizer
 from .config import AlignAttConfig
 from .whisper.audio import log_mel_spectrogram, TOKENS_PER_SECOND, pad_or_trim, N_SAMPLES, N_FRAMES
 from .whisper.timing import median_filter
-from .whisper.decoding import GreedyDecoder, BeamSearchDecoder, SuppressTokens, detect_language
+from .whisper.decoding import GreedyDecoder, BeamSearchDecoder, SuppressTokens
 from .beam import BeamPyTorchInference
 from .eow_detection import fire_at_boundary, load_cif
-import os
 
 from .token_buffer import TokenBuffer
 
 import numpy as np
-from .generation_progress import *
+from .generation_progress import BeamTokens, Logits, Tokens
 
 DEC_PAD = 50257
 logger = logging.getLogger(__name__)
 
-import sys
-import wave
 
-# New features added to the original version of Simul-Whisper: 
+
+# New features added to the original version of Simul-Whisper:
 # - large-v3 model support
 # - translation support
 # - beam search
@@ -45,16 +43,17 @@ class PaddedAlignAttWhisper:
         logger.info(f"Model dimensions: {self.model.dims}")
 
         self.decode_options = DecodingOptions(
-            language = cfg.language, 
+            language = cfg.language,
             without_timestamps = True,
             task=cfg.task
         )
         self.tokenizer_is_multilingual = not model_name.endswith(".en")
         self.create_tokenizer(cfg.language if cfg.language != "auto" else None)
         self.detected_language = cfg.language if cfg.language != "auto" else None
-        
+
         self.max_text_len = self.model.dims.n_text_ctx
-        self.num_decoder_layers = len(self.model.decoder.blocks)
+        decoder_blocks = getattr(self.model.decoder, 'blocks', None)
+        self.num_decoder_layers = len(decoder_blocks) if decoder_blocks is not None and hasattr(decoder_blocks, '__len__') else 0
         self.cfg = cfg
         self.l_hooks = []
 
@@ -69,10 +68,12 @@ class PaddedAlignAttWhisper:
             # net_output[1]: B*num_head*token_len*audio_len
             t = F.softmax(net_output[1], dim=-1)
             self.dec_attns.append(t.squeeze(0))
-        for b in self.model.decoder.blocks:
-            hook = b.cross_attn.register_forward_hook(layer_hook)
-            self.l_hooks.append(hook)
-        
+        if hasattr(self.model.decoder, 'blocks') and self.model.decoder.blocks is not None:
+            for b in self.model.decoder.blocks:
+                if hasattr(b, 'cross_attn') and b.cross_attn is not None:
+                    hook = b.cross_attn.register_forward_hook(layer_hook)
+                    self.l_hooks.append(hook)
+
         self.kv_cache = {}
         def kv_hook(module: torch.nn.Linear, _, net_output: torch.Tensor):
             if module.cache_id not in self.kv_cache or net_output.shape[1] > self.max_text_len:
@@ -81,16 +82,22 @@ class PaddedAlignAttWhisper:
             else:
                 x = self.kv_cache[module.cache_id]
                 self.kv_cache[module.cache_id] = torch.cat([x, net_output], dim=1).detach()
-            return self.kv_cache[module.cache_id] 
+            return self.kv_cache[module.cache_id]
 
-        for i,b in enumerate(self.model.decoder.blocks):
-            hooks = [
-                b.attn.key.register_forward_hook(kv_hook),
-                b.attn.value.register_forward_hook(kv_hook),
-                b.cross_attn.key.register_forward_hook(kv_hook),
-                b.cross_attn.value.register_forward_hook(kv_hook),
-            ]
-            self.l_hooks.extend(hooks)
+        if hasattr(self.model.decoder, 'blocks') and self.model.decoder.blocks is not None:
+            for i,b in enumerate(self.model.decoder.blocks):
+                hooks = []
+                if hasattr(b, 'attn') and b.attn is not None:
+                    if hasattr(b.attn, 'key') and b.attn.key is not None:
+                        hooks.append(b.attn.key.register_forward_hook(kv_hook))
+                    if hasattr(b.attn, 'value') and b.attn.value is not None:
+                        hooks.append(b.attn.value.register_forward_hook(kv_hook))
+                if hasattr(b, 'cross_attn') and b.cross_attn is not None:
+                    if hasattr(b.cross_attn, 'key') and b.cross_attn.key is not None:
+                        hooks.append(b.cross_attn.key.register_forward_hook(kv_hook))
+                    if hasattr(b.cross_attn, 'value') and b.cross_attn.value is not None:
+                        hooks.append(b.cross_attn.value.register_forward_hook(kv_hook))
+                self.l_hooks.extend(hooks)
 
         self.align_source = {}
         self.num_align_heads = 0
@@ -109,21 +116,30 @@ class PaddedAlignAttWhisper:
                 self.tokenizer.sot,
                 self.tokenizer.sot_prev,
                 self.tokenizer.sot_lm,
-                # self.tokenizer.eot 
+                # self.tokenizer.eot
                 self.tokenizer.no_timestamps,  # added by DM
             ] + list(self.tokenizer.all_language_tokens)  # added by DM
         if self.tokenizer.no_speech is not None:
             suppress_tokens.append(self.tokenizer.no_speech)
         suppress_tokens =  tuple(sorted(set(suppress_tokens)))
         logger.debug(f"Suppress tokens: {suppress_tokens}")
-        sup_tokens = SuppressTokens(suppress_tokens)
-        self.suppress_tokens = lambda logits: sup_tokens.apply(logits, None)
+        sup_tokens = SuppressTokens(suppress_tokens) if suppress_tokens else None
+        def suppress_tokens_func(logits, tokens=None):
+            if sup_tokens is not None:
+                # Create a dummy tensor if tokens is None
+                if tokens is None:
+                    import torch
+                    tokens = torch.tensor([[]], dtype=torch.long, device=logits.device)
+                return sup_tokens.apply(logits, tokens)
+            else:
+                return logits
+        self.suppress_tokens = suppress_tokens_func
         # blank tokens are suppresed for new segments near the line 334
 
         # it's going to be regenerated after lang id
         self.segments = []
         self.init_tokens()
-        
+
         self.last_attend_frame = -self.cfg.rewind_threshold
         self.cumulative_time_offset = 0.0
 
@@ -145,7 +161,7 @@ class PaddedAlignAttWhisper:
             self.inference.kv_cache = self.kv_cache
 
             self.token_decoder = BeamSearchDecoder(inference=self.inference, eot=self.tokenizer.eot, beam_size=cfg.beam_size)
-            
+
     def remove_hooks(self):
         print('remove hook')
         for hook in self.l_hooks:
@@ -153,15 +169,15 @@ class PaddedAlignAttWhisper:
 
     def create_tokenizer(self, language=None):
         self.tokenizer = tokenizer.get_tokenizer(
-            multilingual=self.tokenizer_is_multilingual,  
+            multilingual=self.tokenizer_is_multilingual,
             language=language,
             num_languages=self.model.num_languages,
             task=self.decode_options.task
         )
 
     def init_context(self):
-        kw = {'tokenizer': self.tokenizer, 
-              'device': self.model.device, 
+        kw = {'tokenizer': self.tokenizer,
+              'device': self.model.device,
               'prefix_token_ids': [self.tokenizer.sot_prev]}
         self.context = TokenBuffer.empty(**kw)
         if self.cfg.static_init_prompt is not None:
@@ -173,8 +189,8 @@ class PaddedAlignAttWhisper:
         logger.debug(f"init tokens, {len(self.segments)}")
         # init tokens (mandatory prompt)
         self.initial_tokens = torch.tensor(
-            self.tokenizer.sot_sequence_including_notimestamps, 
-            dtype=torch.long, 
+            self.tokenizer.sot_sequence_including_notimestamps,
+            dtype=torch.long,
             device=self.model.device).unsqueeze(0)
         self.initial_token_length = self.initial_tokens.shape[1]
         self.sot_index = self.tokenizer.sot_sequence.index(self.tokenizer.sot)
@@ -213,13 +229,13 @@ class PaddedAlignAttWhisper:
             logger.debug(f"Logits shape: {tokens.shape}")
             logit = self.inference.logits(tokens, audio_features)
         return logit
-    
+
 
     def refresh_segment(self, complete=False):
 
         logger.debug("Refreshing segment:")
         self.init_tokens()
-        self.last_attend_frame = -self.cfg.rewind_threshold       
+        self.last_attend_frame = -self.cfg.rewind_threshold
         self.detected_language = None
         self.cumulative_time_offset = 0.0
         self.init_context()
@@ -245,7 +261,7 @@ class PaddedAlignAttWhisper:
         logger.debug(f"_current_tokens - Initial toks length: {len(toks)}")
         for i, tok in enumerate(toks):
             logger.debug(f"_current_tokens - toks[{i}] shape: {tok.shape}, dtype: {tok.dtype}")
-        
+
         # very first infer: duplicate start of seq to beam_size
         if toks[0].shape[0] == 1:
             logger.debug(f"_current_tokens - Duplicating start seq to beam_size: {self.cfg.beam_size}")
@@ -270,7 +286,7 @@ class PaddedAlignAttWhisper:
             logger.debug("_current_tokens - Using single token tensor")
             current_tokens = toks[0]
             logger.debug(f"_current_tokens - Single tensor shape: {current_tokens.shape}")
-            
+
         logger.debug(f"_current_tokens - Final current_tokens shape: {current_tokens.shape}, dtype: {current_tokens.dtype}")
         logger.debug("debug print current_tokens:")
         self.debug_print_tokens(current_tokens)
@@ -281,7 +297,7 @@ class PaddedAlignAttWhisper:
         for i in range(self.cfg.beam_size):
             logger.debug(self.tokenizer.decode_with_timestamps(tokens[i].tolist()))
 
-    ### audio buffer 
+    ### audio buffer
 
     def segments_len(self):
         segments_len = sum(s.shape[0] for s in self.segments) / 16000
@@ -290,7 +306,7 @@ class PaddedAlignAttWhisper:
     def _apply_minseglen(self):
         segments_len = self.segments_len()
         # wait for long enough audio to start
-        if segments_len < self.cfg.audio_min_len: 
+        if segments_len < self.cfg.audio_min_len:
             logger.debug("waiting for next segment")
             return False
         return True
@@ -302,7 +318,7 @@ class PaddedAlignAttWhisper:
                 segment = torch.from_numpy(segment).float()
             elif not isinstance(segment, torch.Tensor):
                 segment = torch.tensor(segment, dtype=torch.float32)
-            
+
             # Ensure segment is on the correct device
             segment = segment.to(self.model.device)
             logger.debug(f"insert_audio - segment shape: {segment.shape}, dtype: {segment.dtype}, device: {segment.device}")
@@ -338,7 +354,7 @@ class PaddedAlignAttWhisper:
         """Language detection from encoder features.
         This code is trimmed and copy-pasted from whisper.decoding.detect_language .
         """
-    
+
         # forward pass using a single token, startoftranscript
         n_audio = encoder_features.shape[0]
         x = torch.tensor([[self.tokenizer.sot]] * n_audio).to(self.model.device)  # [n_audio, 1]
@@ -386,9 +402,9 @@ class PaddedAlignAttWhisper:
             input_segments = self.segments[0]
 
 
-        
+
         # mel + padding to 30s
-        mel_padded = log_mel_spectrogram(input_segments, n_mels=self.model.dims.n_mels, padding=N_SAMPLES, 
+        mel_padded = log_mel_spectrogram(input_segments, n_mels=self.model.dims.n_mels, padding=N_SAMPLES,
                                             device=self.model.device).unsqueeze(0)
         # trim to 3000
         mel = pad_or_trim(mel_padded, N_FRAMES)
@@ -403,9 +419,19 @@ class PaddedAlignAttWhisper:
 #        if mel.shape[-2:] != (self.model.dims.n_audio_ctx, self.model.dims.n_audio_state):
 #            logger.debug("mel ")
         if self.cfg.language == "auto" and self.detected_language is None:
-            language_tokens, language_probs = self.lang_id(encoder_feature) 
+            language_tokens, language_probs = self.lang_id(encoder_feature)
             logger.debug(f"Language tokens: {language_tokens}, probs: {language_probs}")
-            top_lan, p = max(language_probs[0].items(), key=lambda x: x[1])
+            if language_probs:
+                if isinstance(language_probs, dict):
+                    # Single case: language_probs is directly a dict
+                    top_lan, p = max(language_probs.items(), key=lambda x: x[1])
+                elif isinstance(language_probs, list) and len(language_probs) > 0 and isinstance(language_probs[0], dict):
+                    # List case: language_probs is a list of dicts
+                    top_lan, p = max(language_probs[0].items(), key=lambda x: x[1])
+                else:
+                    top_lan, p = "en", 1.0
+            else:
+                top_lan, p = "en", 1.0
             logger.info(f"Detected language: {top_lan} with p={p:.4f}")
             #self.tokenizer.language = top_lan
             #self.tokenizer.__post_init__()
@@ -416,7 +442,7 @@ class PaddedAlignAttWhisper:
 
         self.trim_context()
         current_tokens = self._current_tokens()
-#        
+#
         fire_detected = self.fire_at_boundary(encoder_feature[:, :content_mel_len, :])
 
 
@@ -430,7 +456,7 @@ class PaddedAlignAttWhisper:
         most_attended_frame = None
 
         token_len_before_decoding = current_tokens.shape[1]
-        
+
         generation_progress = []
         generation = {
             "starting_tokens": BeamTokens(current_tokens[0,:].clone(), self.cfg.beam_size),
@@ -505,7 +531,9 @@ class PaddedAlignAttWhisper:
 
             attn_of_alignment_heads = [[] for _ in range(self.num_align_heads)]
             for i, attn_mat in enumerate(self.dec_attns):
-                layer_rank = int(i % len(self.model.decoder.blocks))
+                decoder_blocks = getattr(self.model.decoder, 'blocks', None)
+                decoder_blocks_len = len(decoder_blocks) if decoder_blocks is not None and hasattr(decoder_blocks, '__len__') else 1
+                layer_rank = int(i % decoder_blocks_len)
                 align_heads_in_layer = self.align_source.get(layer_rank, [])
                 if len(align_heads_in_layer) == 0:
                     continue
@@ -519,7 +547,7 @@ class PaddedAlignAttWhisper:
             tmp = []
             for mat in attn_of_alignment_heads:
                 t = torch.cat(mat, dim=1)
-                tmp.append(t) 
+                tmp.append(t)
             attn_of_alignment_heads = torch.stack(tmp, dim=1)
 #            logger.debug(str(attn_of_alignment_heads.shape) + " tttady")
             std, mean = torch.std_mean(attn_of_alignment_heads, dim=-2, keepdim=True, unbiased=False)
@@ -533,11 +561,11 @@ class PaddedAlignAttWhisper:
             # for each beam, the most attended frame is:
             most_attended_frames = torch.argmax(attn_of_alignment_heads[:,-1,:], dim=-1)
             generation_progress_loop.append(("most_attended_frames",most_attended_frames.clone().tolist()))
-            
+
             # Calculate absolute timestamps accounting for cumulative offset
             absolute_timestamps = [(frame * 0.02 + self.cumulative_time_offset) for frame in most_attended_frames.tolist()]
             generation_progress_loop.append(("absolute_timestamps", absolute_timestamps))
-            
+
             logger.debug(str(most_attended_frames.tolist()) + " most att frames")
             logger.debug(f"Absolute timestamps: {absolute_timestamps} (offset: {self.cumulative_time_offset:.2f}s)")
 
@@ -550,7 +578,7 @@ class PaddedAlignAttWhisper:
             #    # stripping the last token, the eot
                 current_tokens = current_tokens[:, :-1]
                 break
-            
+
             # for some rare cases where the attention fails
             if not is_last and self.last_attend_frame - most_attended_frame > self.cfg.rewind_threshold:
                 # TODO: check this
@@ -572,14 +600,14 @@ class PaddedAlignAttWhisper:
                 # stripping the last token, the one that is attended too close to the end
                 current_tokens = current_tokens[:, :-1]
                 break
-        
+
             # debug print
             for i in range(self.cfg.beam_size):
                 logger.debug("attn: {}, current pos: {}, current token: {}({})".format(
                     attn_of_alignment_heads.shape if attn_of_alignment_heads is not None else None,
-                    most_attended_frames[i], 
+                    most_attended_frames[i],
                     current_tokens[i, -1].item(),
-                    self.tokenizer.decode([current_tokens[i, -1].item()])
+                    self.tokenizer.decode([int(current_tokens[i, -1].item())])
                 ))
 
 #        for k,v in generation.items():
@@ -626,7 +654,7 @@ class PaddedAlignAttWhisper:
 #            text_before_space = " ".join(text_to_split.split(" ")[:-1])
 #            logger.debug("before the last space: {}".format(text_before_space.replace(" ", "<space>")))
             if len(split_words) > 1:
-                new_hypothesis = [i for sublist in split_tokens[:-1] for i in sublist]  
+                new_hypothesis = [i for sublist in split_tokens[:-1] for i in sublist]
             else:
                 new_hypothesis = []
 
@@ -641,7 +669,7 @@ class PaddedAlignAttWhisper:
 #        ret = ret[ret<DEC_PAD]
 
         logger.info(f"Output: {self.tokenizer.decode(new_hypothesis)}")
-        
+
         self._clean_cache()
 
         return new_hypothesis, generation

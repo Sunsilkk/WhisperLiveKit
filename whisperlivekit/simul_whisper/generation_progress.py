@@ -17,7 +17,7 @@ class BeamTokens(Tokens):
         self.beam_size = beam_size
 
     def clone(self):
-        return BeamTokens(self.tokens.clone())
+        return BeamTokens(self.tokens.clone(), self.beam_size)
 
     def __str__(self):
         return f"BeamTokens({self.tokens.tolist()}, beam_size={self.beam_size})"

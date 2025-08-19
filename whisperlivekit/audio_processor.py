@@ -288,15 +288,19 @@ class AudioProcessor:
 
         while True:
             try:
-                item = await self.transcription_queue.get()
+                item = await self.transcription_queue.get() if self.transcription_queue else None
+                if self.transcription_queue is None:
+                    break
                 if item is SENTINEL:
                     logger.debug("Transcription processor received sentinel. Finishing.")
-                    self.transcription_queue.task_done()
+                    if self.transcription_queue:
+                        self.transcription_queue.task_done()
                     break
 
                 if not self.online:
                     logger.warning("Transcription processor: self.online not initialized.")
-                    self.transcription_queue.task_done()
+                    if self.transcription_queue:
+                        self.transcription_queue.task_done()
                     continue
 
                 asr_internal_buffer_duration_s = len(getattr(self.online, 'audio_buffer', [])) / self.online.SAMPLING_RATE
@@ -312,6 +316,7 @@ class AudioProcessor:
                     self.online.insert_silence(item.duration, self.tokens[-1].end)
                     continue
 
+                pcm_array = None
                 if isinstance(item, np.ndarray):
                     pcm_array = item
                 else:
@@ -333,7 +338,7 @@ class AudioProcessor:
 
                 if new_tokens:
                     validated_text = self.sep.join([t.text for t in new_tokens])
-                    if buffer_text.startswith(validated_text):
+                    if buffer_text and buffer_text.startswith(validated_text):
                         buffer_text = buffer_text[len(validated_text):].lstrip()
 
                 candidate_end_times = [self.end_buffer]
@@ -351,12 +356,13 @@ class AudioProcessor:
                 await self.update_transcription(
                     new_tokens, buffer_text, new_end_buffer, self.sep
                 )
-                self.transcription_queue.task_done()
+                if self.transcription_queue:
+                    self.transcription_queue.task_done()
 
             except Exception as e:
                 logger.warning(f"Exception in transcription_processor: {e}")
                 logger.warning(f"Traceback: {traceback.format_exc()}")
-                if 'pcm_array' in locals() and pcm_array is not SENTINEL : # Check if pcm_array was assigned from queue
+                if self.transcription_queue and 'pcm_array' in locals() and locals().get('pcm_array') is not SENTINEL:
                     self.transcription_queue.task_done()
         logger.info("Transcription processor task finished.")
 
@@ -367,15 +373,19 @@ class AudioProcessor:
 
         while True:
             try:
-                item = await self.diarization_queue.get()
+                item = await self.diarization_queue.get() if self.diarization_queue else None
+                if self.diarization_queue is None:
+                    break
                 if item is SENTINEL:
                     logger.debug("Diarization processor received sentinel. Finishing.")
-                    self.diarization_queue.task_done()
+                    if self.diarization_queue:
+                        self.diarization_queue.task_done()
                     break
 
                 # Skip Silence objects for diarization (diarization doesn't need silence handling)
                 if type(item) is Silence:
-                    self.diarization_queue.task_done()
+                    if self.diarization_queue:
+                        self.diarization_queue.task_done()
                     continue
 
                 # Process diarization with audio data only
@@ -383,7 +393,8 @@ class AudioProcessor:
                     await diarization_obj.diarize(item)
                 else:
                     logger.warning(f"Diarization processor received unexpected item type: {type(item)}")
-                    self.diarization_queue.task_done()
+                    if self.diarization_queue:
+                        self.diarization_queue.task_done()
                     continue
 
                 async with self.lock:
@@ -396,12 +407,13 @@ class AudioProcessor:
                     if buffer_diarization:
                         self.buffer_diarization = buffer_diarization
 
-                self.diarization_queue.task_done()
+                if self.diarization_queue:
+                    self.diarization_queue.task_done()
 
             except Exception as e:
                 logger.warning(f"Exception in diarization_processor: {e}")
                 logger.warning(f"Traceback: {traceback.format_exc()}")
-                if 'pcm_array' in locals() and locals().get('pcm_array') is not SENTINEL:
+                if self.diarization_queue and 'item' in locals() and locals().get('item') is not SENTINEL:
                     self.diarization_queue.task_done()
         logger.info("Diarization processor task finished.")
 
@@ -518,8 +530,8 @@ class AudioProcessor:
                 should_push = (
                     current_response_signature != self.last_response_content
                     or last_sent_trans is None
-                    or round(trans, 1) != round(last_sent_trans, 1)
-                    or round(diar, 1) != round(last_sent_diar, 1)
+                    or (last_sent_trans is not None and round(trans, 1) != round(last_sent_trans, 1))
+                    or (last_sent_diar is not None and round(diar, 1) != round(last_sent_diar, 1))
                 )
                 if should_push and (final_lines_for_response or buffer_transcription or buffer_diarization or response_status == "no_audio_detected" or trans > 0 or diar > 0):
                     yield response
@@ -537,7 +549,6 @@ class AudioProcessor:
 
                     if all_processors_done:
                         logger.info("Results formatter: All upstream processors are done and in stopping state. Terminating.")
-                        final_state = await self.get_current_state()
                         return
 
                 await asyncio.sleep(0.1)  # Avoid overwhelming the client
@@ -630,8 +641,9 @@ class AudioProcessor:
         logger.info("All processing tasks cancelled or finished.")
         await self.ffmpeg_manager.stop()
         logger.info("FFmpeg manager stopped.")
-        if self.args.diarization and hasattr(self, 'diarization') and hasattr(self.diarization, 'close'):
-            self.diarization.close()
+        if self.args.diarization and hasattr(self, 'diarization') and self.diarization is not None and hasattr(self.diarization, 'close'):
+            if callable(getattr(self.diarization, 'close')):
+                self.diarization.close()
         logger.info("AudioProcessor cleanup complete.")
 
 

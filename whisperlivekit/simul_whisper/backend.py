@@ -58,7 +58,8 @@ class SimulStreamingOnlineProcessor:
         """
         if silence_duration < 5:
             gap_silence = torch.zeros(int(16000*min(silence_duration, 1.0)))
-            self.model.insert_audio(gap_silence)
+            if hasattr(self.model, 'insert_audio'):
+                self.model.insert_audio(gap_silence)
             self.global_time_offset = silence_duration - 1.0
         else:
             self.model.refresh_segment(complete=True)
@@ -80,7 +81,8 @@ class SimulStreamingOnlineProcessor:
             self.end = audio_stream_end_time
         else:
             self.end = self.cumulative_audio_duration
-        self.model.insert_audio(audio_tensor)
+        if hasattr(self.model, 'insert_audio'):
+            self.model.insert_audio(audio_tensor)
 
     def get_buffer(self):
         return Transcript(
@@ -101,7 +103,7 @@ class SimulStreamingOnlineProcessor:
         returns:
             List of tuples containing (start_time, end_time, word) for each word
         """
-        FRAME_DURATION = 0.02
+
         if "result" in generation:
             split_words = generation["result"]["split_words"]
             split_tokens = generation["result"]["split_tokens"]
@@ -116,6 +118,7 @@ class SimulStreamingOnlineProcessor:
         for word, word_tokens in zip(split_words, split_tokens):
             # start_frame = None
             # end_frame = None
+            current_timestamp = 0.0  # Initialize with default value
             for expected_token in word_tokens:
                 if not tokens_queue or not frames:
                     raise ValueError(f"Insufficient tokens or frames for word '{word}'")
@@ -147,10 +150,10 @@ class SimulStreamingOnlineProcessor:
         Returns a tuple: (list of committed ASRToken objects, float representing the audio processed up to time).
         """
         try:
-            logger.debug(f"SimulStreaming process_iter - is_last: {self.is_last}")
-            logger.debug(f"SimulStreaming process_iter - About to call model.infer()")
+            logger.debug("SimulStreaming process_iter - is_last: %s", self.is_last)
+            logger.debug("SimulStreaming process_iter - About to call model.infer()")
             tokens, generation_progress = self.model.infer(is_last=self.is_last)
-            logger.debug(f"SimulStreaming process_iter - model.infer() completed successfully")
+            logger.debug("SimulStreaming process_iter - model.infer() completed successfully")
             logger.debug(f"SimulStreaming process_iter - tokens type: {type(tokens)}, generation_progress type: {type(generation_progress)}")
             ts_words = self.timestamped_text(tokens, generation_progress)
 
@@ -269,17 +272,17 @@ class SimulStreamingASR():
                 model_path=self.model_path,
                 segment_length=self.segment_length,
                 frame_threshold=self.frame_threshold,
-                language=self.original_language,
+                language=self.original_language or "auto",
                 audio_max_len=self.audio_max_len,
                 audio_min_len=self.audio_min_len,
-                cif_ckpt_path=self.cif_ckpt_path,
+                cif_ckpt_path=self.cif_ckpt_path or "",
                 decoder_type="beam",
                 beam_size=self.beams,
                 task=self.task,
                 never_fire=self.never_fire,
-                init_prompt=self.init_prompt,
-                max_context_tokens=self.max_context_tokens,
-                static_init_prompt=self.static_init_prompt,
+                init_prompt=self.init_prompt or "",
+                max_context_tokens=self.max_context_tokens or 448,
+                static_init_prompt=self.static_init_prompt or "",
         )
 
         self.model_name = os.path.basename(self.cfg.model_path).replace(".pt", "")
@@ -296,7 +299,8 @@ class SimulStreamingASR():
 
         if self.warmup_file:
             warmup_audio = load_file(self.warmup_file)
-            whisper_model.transcribe(warmup_audio, language=self.original_language)
+            if warmup_audio is not False:
+                whisper_model.transcribe(warmup_audio, language=self.original_language)
         return whisper_model
 
     def get_new_model_instance(self):

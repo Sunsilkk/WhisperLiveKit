@@ -23,7 +23,7 @@ class TranscriptionEngine:
 
         defaults = {
             "host": "localhost",
-            "port": 8000,
+            "port": 1912,
             "warmup_file": None,
             "diarization": False,
             "punctuation_split": False,
