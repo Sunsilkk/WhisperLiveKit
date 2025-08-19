@@ -9,13 +9,14 @@ description = "Real-time, Fully Local Whisper's Speech-to-Text and Speaker Diari
 readme = "README.md"
 authors = [{ name = "Quentin Fuxa" }, { name = "Sunsilk" }]
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
@@ -41,6 +42,9 @@ whisper = ["whisper"]
 whisper-timestamped = ["whisper-timestamped"]
 mlx-whisper = ["mlx-whisper"]
 openai = ["openai"]
+sortformer = [
+    "nemo-toolkit[asr]",
+]
 
 [project.urls]
 Homepage = "https://github.com/QuentinFuxa/WhisperLiveKit"
@@ -63,3 +67,6 @@ packages = [
 [tool.setuptools.package-data]
 whisperlivekit = ["web/*.html"]
 "whisperlivekit.simul_whisper.whisper.assets" = ["*.tiktoken", "*.npz"]
+
+[tool.uv.sources]
+nemo-toolkit = { git = "https://github.com/NVIDIA/NeMo.git", rev = "main" }

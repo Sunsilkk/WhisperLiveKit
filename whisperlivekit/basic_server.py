@@ -68,7 +68,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await audio_processor.process_audio(message)
     except KeyError as e:
         if 'bytes' in str(e):
-            logger.warning(f"Client has closed the connection.")
+            logger.warning("Client has closed the connection.")
         else:
             logger.error(f"Unexpected KeyError in websocket_endpoint: {e}", exc_info=True)
     except WebSocketDisconnect:
