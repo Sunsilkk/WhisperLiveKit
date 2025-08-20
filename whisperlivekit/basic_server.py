@@ -1,11 +1,14 @@
-from contextlib import asynccontextmanager
-from typing import Optional
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
-from whisperlivekit import TranscriptionEngine, AudioProcessor, get_web_interface_html, parse_args
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+from typing import Optional
+
+import httpx
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+
+from whisperlivekit import AudioProcessor, TranscriptionEngine, get_web_interface_html, parse_args
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger().setLevel(logging.WARNING)
@@ -14,6 +17,10 @@ logger.setLevel(logging.DEBUG)
 
 args = parse_args()
 transcription_engine = None
+
+
+API_BASE = "http://localhost:4000/api/v1/experience-event"
+ACTOR_ID = "2222a8c2-13f4-4e7a-9ab3-1ee3ffffabcd"
 
 
 @asynccontextmanager
@@ -40,14 +47,71 @@ async def get():
     return HTMLResponse(get_web_interface_html())
 
 
+async def save_event_to_db(
+    camera_id: Optional[str],
+    event: str,
+    voice_text: str,
+):
+    if not camera_id:
+        logger.warning("camera_id is None, skip saving event.")
+        return
+
+    event_map = {
+        "xin chào": "SAY_HELLO",
+        "xin lỗi": "SAY_SORRY",
+        "tạm biệt": "SAY_GOODBYE",
+    }
+    event_code = event_map.get(event)
+    if not event_code:
+        logger.warning(f"No mapping found for event={event}, skip.")
+        return
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(
+                f"{API_BASE}/latest/waiting-to-pay",
+                json={"camera_id": camera_id},
+                headers={
+                    "Content-Type": "application/json",
+                    "accept": "*/*",
+                },
+            )
+            resp.raise_for_status()
+            uuid = resp.json().get("uuid")
+            if not uuid:
+                logger.warning(f"Cannot get uuid for camera_id={camera_id}")
+                return
+
+            payload = {
+                "event": event_code,
+                "voice_text": voice_text,
+                "camera_id": camera_id,
+                "actor_id": ACTOR_ID,
+                "uuid": uuid,
+            }
+            post_resp = await client.post(
+                API_BASE,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "accept": "*/*",
+                },
+            )
+            post_resp.raise_for_status()
+            logger.info(f"[DB] Saved event {event_code} for camera_id={camera_id}, uuid={uuid}")
+
+        except Exception as e:
+            logger.error(f"Error saving event to DB: {e}")
+
+
 async def handle_websocket_results(
     websocket,
     results_generator,
     camera_id: Optional[str] = None,
 ):
-    """Consumes results from the audio processor and sends them via WebSocket."""
+    last_event = None
+
     try:
-        last_event = None
         async for response in results_generator:
             await websocket.send_json(response)
 
@@ -62,6 +126,7 @@ async def handle_websocket_results(
                 continue
 
             text = last_line_with_text.get("text", "").lower()
+
             new_event = None
             if "xin chào" in text:
                 new_event = "xin chào"
@@ -71,15 +136,21 @@ async def handle_websocket_results(
                 new_event = "tạm biệt"
 
             if new_event and new_event != last_event:
+                await save_event_to_db(
+                    camera_id,
+                    new_event,
+                    last_line_with_text["text"],
+                )
                 last_event = new_event
 
-        # when the results_generator finishes it means all audio has been processed
         logger.info("Results generator finished. Sending 'ready_to_stop' to client.")
         await websocket.send_json({"type": "ready_to_stop"})
+
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected while handling results (client likely closed connection).")
+        logger.info(f"WebSocket disconnected (camera_id={camera_id})")
+
     except Exception as e:
-        logger.error(f"Error in WebSocket results handler: {e}")
+        logger.error(f"Error in WebSocket results handler (camera_id={camera_id}): {e}")
 
 
 @app.websocket("/asr")
