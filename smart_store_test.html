@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Store Audio Test Interface</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --error-color: #ef4444;
+            --background: #f8fafc;
+            --card-background: white;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border: #e2e8f0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+
+        .card {
+            background: var(--card-background);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            border: 1px solid var(--border);
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .input-group {
+            margin-bottom: 16px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+
+        .button-primary {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .button-primary:hover:not(:disabled) {
+            background: #1d4ed8;
+        }
+
+        .button-success {
+            background: var(--success-color);
+            color: white;
+        }
+
+        .button-success:hover:not(:disabled) {
+            background: #059669;
+        }
+
+        .button-warning {
+            background: var(--warning-color);
+            color: white;
+        }
+
+        .button-warning:hover:not(:disabled) {
+            background: #d97706;
+        }
+
+        .button-error {
+            background: var(--error-color);
+            color: white;
+        }
+
+        .button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .status {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-weight: 500;
+        }
+
+        .status-info {
+            background: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+        }
+
+        .status-success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .status-warning {
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fed7aa;
+        }
+
+        .status-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        .transcript {
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .transcript-line {
+            margin-bottom: 8px;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .transcript-customer {
+            background: #e0f2fe;
+            border-left: 3px solid var(--primary-color);
+        }
+
+        .transcript-keyword {
+            background: #fff3cd;
+            border-left: 3px solid var(--warning-color);
+            font-weight: bold;
+        }
+
+        .transcript-api {
+            background: #d4edda;
+            border-left: 3px solid var(--success-color);
+        }
+
+        .transcript-error {
+            background: #f8d7da;
+            border-left: 3px solid var(--error-color);
+        }
+
+        .session-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .info-item {
+            text-align: center;
+            padding: 16px;
+            background: var(--background);
+            border-radius: 6px;
+        }
+
+        .info-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .info-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        @media (max-width: 768px) {
+            .controls-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏪 Smart Store Audio Test Interface</h1>
+            <p>Test WebSocket endpoint: <code>/asr-smart-store</code></p>
+        </div>
+
+        <div class="card">
+            <h3>📊 Session Information</h3>
+            <div class="session-info">
+                <div class="info-item">
+                    <div class="info-value" id="sessionIdDisplay">-</div>
+                    <div class="info-label">Session ID</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-value" id="currentCustomerDisplay">-</div>
+                    <div class="info-label">Current Customer</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-value" id="customerCountDisplay">0</div>
+                    <div class="info-label">Customers Served</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-value" id="connectionStatusDisplay">Disconnected</div>
+                    <div class="info-label">Connection Status</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls-grid">
+            <div class="card">
+                <h3>🔧 Configuration</h3>
+
+                <div class="input-group">
+                    <label for="websocketUrl">WebSocket URL:</label>
+                    <input type="text" id="websocketUrl" value="ws://localhost:8000/asr-smart-store">
+                </div>
+
+                <div class="input-group">
+                    <label for="sessionId">Session ID:</label>
+                    <input type="text" id="sessionId" value="smart_store_001" placeholder="e.g., store_table_05">
+                </div>
+
+                <div class="input-group">
+                    <label for="streamId">Stream ID (Camera/Mic):</label>
+                    <input type="text" id="streamId" value="camera_001" placeholder="e.g., camera_001">
+                </div>
+
+                <div class="input-group">
+                    <label for="chunkDuration">Chunk Duration (ms):</label>
+                    <select id="chunkDuration">
+                        <option value="250">250ms</option>
+                        <option value="500">500ms</option>
+                        <option value="1000" selected>1000ms</option>
+                    </select>
+                </div>
+
+                <button class="button button-primary" onclick="connectWebSocket()">
+                    🔗 Connect WebSocket
+                </button>
+                <button class="button button-error" onclick="disconnectWebSocket()">
+                    ❌ Disconnect
+                </button>
+            </div>
+
+            <div class="card">
+                <h3>👥 Customer Management</h3>
+
+                <div class="input-group">
+                    <label for="customerId">Customer UUID:</label>
+                    <input type="text" id="customerId" placeholder="Will be auto-generated">
+                </div>
+
+                <button class="button button-success" onclick="startNewCustomer()">
+                    ▶️ Start New Customer
+                </button>
+                <button class="button button-warning" onclick="stopCurrentCustomer()">
+                    ⏸️ Stop Current Customer
+                </button>
+                <button class="button button-primary" onclick="generateNewUUID()">
+                    🎲 Generate New UUID
+                </button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📢 Audio Recording</h3>
+            <div id="statusDisplay" class="status status-info">Ready to connect WebSocket</div>
+
+            <button class="button button-success" id="recordButton" onclick="toggleRecording()" disabled>
+                🎤 Start Recording
+            </button>
+            <button class="button button-error" onclick="sendTestKeywords()">
+                🧪 Send Test Keywords
+            </button>
+        </div>
+
+        <div class="card">
+            <h3>💬 Live Transcript & Events</h3>
+            <div id="transcript" class="transcript">
+                <div class="transcript-line">Waiting for audio data...</div>
+            </div>
+            <button class="button button-primary" onclick="clearTranscript()">
+                🗑️ Clear Transcript
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let websocket = null;
+        let recorder = null;
+        let isRecording = false;
+        let currentCustomerId = null;
+        let sessionId = null;
+        let streamId = null;
+        let chunkDuration = 1000;
+        let sequenceNumber = 1;
+        let customerCount = 0;
+
+        // Generate UUID v4
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        function generateNewUUID() {
+            document.getElementById('customerId').value = generateUUID();
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('statusDisplay');
+            statusDiv.textContent = message;
+            statusDiv.className = `status status-${type}`;
+        }
+
+        function updateSessionInfo() {
+            document.getElementById('sessionIdDisplay').textContent = sessionId || '-';
+            document.getElementById('currentCustomerDisplay').textContent =
+                currentCustomerId ? currentCustomerId.substring(0, 8) + '...' : '-';
+            document.getElementById('customerCountDisplay').textContent = customerCount;
+            document.getElementById('connectionStatusDisplay').textContent =
+                websocket?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected';
+        }
+
+        function addToTranscript(message, type = 'info') {
+            const transcript = document.getElementById('transcript');
+            const line = document.createElement('div');
+            line.className = `transcript-line transcript-${type}`;
+            line.innerHTML = `<strong>[${new Date().toLocaleTimeString()}]</strong> ${message}`;
+            transcript.appendChild(line);
+            transcript.scrollTop = transcript.scrollHeight;
+        }
+
+        function clearTranscript() {
+            document.getElementById('transcript').innerHTML =
+                '<div class="transcript-line">Transcript cleared...</div>';
+        }
+
+        function connectWebSocket() {
+            const url = document.getElementById('websocketUrl').value;
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                updateStatus('WebSocket already connected', 'warning');
+                return;
+            }
+
+            websocket = new WebSocket(url);
+
+            websocket.onopen = () => {
+                updateStatus('WebSocket connected successfully', 'success');
+                addToTranscript('🔗 WebSocket connected', 'success');
+                updateSessionInfo();
+            };
+
+            websocket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                } catch (e) {
+                    addToTranscript(`❌ Failed to parse message: ${e.message}`, 'error');
+                }
+            };
+
+            websocket.onclose = () => {
+                updateStatus('WebSocket disconnected', 'error');
+                addToTranscript('🔌 WebSocket disconnected', 'error');
+                updateSessionInfo();
+            };
+
+            websocket.onerror = (error) => {
+                updateStatus('WebSocket error occurred', 'error');
+                addToTranscript(`❌ WebSocket error: ${error}`, 'error');
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+            if (isRecording) {
+                stopRecording();
+            }
+            currentCustomerId = null;
+            updateSessionInfo();
+        }
+
+        function handleWebSocketMessage(data) {
+            switch (data.type) {
+                case 'audio_stream_ready':
+                    addToTranscript(`✅ Audio stream ready for customer: ${data.data.customer_id}`, 'success');
+                    document.getElementById('recordButton').disabled = false;
+                    break;
+
+                case 'audio_stream_stopped':
+                    addToTranscript(`⏸️ Audio stream stopped for customer: ${data.data.customer_id}`, 'warning');
+                    if (isRecording) {
+                        stopRecording();
+                    }
+                    break;
+
+                case 'ready_to_stop':
+                    addToTranscript(`🏁 Processing complete for customer: ${data.data.customer_id}`, 'success');
+                    break;
+
+                case 'error':
+                    addToTranscript(`❌ Error: ${data.message}`, 'error');
+                    break;
+
+                default:
+                    // Regular transcription update
+                    if (data.lines && data.lines.length > 0) {
+                        data.lines.forEach(line => {
+                            addToTranscript(`🗣️ Speaker ${line.speaker}: ${line.text}`, 'customer');
+                        });
+                    }
+                    if (data.buffer_transcription) {
+                        addToTranscript(`📝 Processing: ${data.buffer_transcription}`, 'info');
+                    }
+                    break;
+            }
+        }
+
+        function startNewCustomer() {
+            if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                updateStatus('Please connect WebSocket first', 'error');
+                return;
+            }
+
+            // Get or generate customer ID
+            let newCustomerId = document.getElementById('customerId').value;
+            if (!newCustomerId) {
+                newCustomerId = generateUUID();
+                document.getElementById('customerId').value = newCustomerId;
+            }
+
+            sessionId = document.getElementById('sessionId').value;
+            streamId = document.getElementById('streamId').value;
+            chunkDuration = parseInt(document.getElementById('chunkDuration').value);
+
+            const startMessage = {
+                type: "audio_stream_start",
+                data: {
+                    session_id: sessionId,
+                    customer_id: newCustomerId,
+                    stream_id: streamId,
+                    codec: "audio/webm;codecs=opus",
+                    channel_count: 1,
+                    sample_rate: 48000,
+                    timeslice_ms: chunkDuration,
+                    client_ts: Date.now(),
+                    type: "start"
+                }
+            };
+
+            websocket.send(JSON.stringify(startMessage));
+            currentCustomerId = newCustomerId;
+            customerCount++;
+            sequenceNumber = 1;
+
+            addToTranscript(`🚀 Started new customer: ${newCustomerId}`, 'customer');
+            updateStatus(`Customer ${newCustomerId.substring(0, 8)}... started`, 'success');
+            updateSessionInfo();
+        }
+
+        function stopCurrentCustomer() {
+            if (!currentCustomerId) {
+                updateStatus('No active customer to stop', 'warning');
+                return;
+            }
+
+            if (isRecording) {
+                stopRecording();
+            }
+
+            const stopMessage = {
+                type: "audio_stream_stop",
+                data: {
+                    session_id: sessionId,
+                    customer_id: currentCustomerId,
+                    stream_id: streamId,
+                    type: "end"
+                }
+            };
+
+            websocket.send(JSON.stringify(stopMessage));
+            addToTranscript(`⏸️ Stopped customer: ${currentCustomerId}`, 'warning');
+
+            currentCustomerId = null;
+            document.getElementById('recordButton').disabled = true;
+            updateStatus('Customer stopped. Ready for next customer.', 'info');
+            updateSessionInfo();
+        }
+
+        async function toggleRecording() {
+            if (!isRecording) {
+                await startRecording();
+            } else {
+                stopRecording();
+            }
+        }
+
+        async function startRecording() {
+            if (!currentCustomerId) {
+                updateStatus('Please start a customer first', 'error');
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 48000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                    ? 'audio/webm;codecs=opus'
+                    : 'audio/webm';
+
+                recorder = new MediaRecorder(stream, { mimeType });
+
+                recorder.ondataavailable = (e) => {
+                    if (websocket && websocket.readyState === WebSocket.OPEN && e.data.size > 0) {
+                        // Send metadata first
+                        const metaMessage = {
+                            type: "audio_chunk_meta",
+                            data: {
+                                session_id: sessionId,
+                                customer_id: currentCustomerId,
+                                stream_id: streamId,
+                                seq: sequenceNumber++,
+                                ts: Date.now(),
+                                codec: mimeType,
+                                duration_ms_hint: chunkDuration
+                            }
+                        };
+
+                        websocket.send(JSON.stringify(metaMessage));
+                        // Then send binary audio data
+                        websocket.send(e.data);
+                    }
+                };
+
+                recorder.start(chunkDuration);
+                isRecording = true;
+
+                document.getElementById('recordButton').textContent = '⏸️ Stop Recording';
+                document.getElementById('recordButton').className = 'button button-error';
+                updateStatus('Recording audio...', 'success');
+                addToTranscript('🎤 Started recording audio', 'success');
+
+            } catch (err) {
+                updateStatus('Failed to access microphone: ' + err.message, 'error');
+                addToTranscript(`❌ Microphone error: ${err.message}`, 'error');
+            }
+        }
+
+        function stopRecording() {
+            if (recorder && isRecording) {
+                recorder.stop();
+                recorder.stream.getTracks().forEach(track => track.stop());
+                recorder = null;
+                isRecording = false;
+
+                document.getElementById('recordButton').textContent = '🎤 Start Recording';
+                document.getElementById('recordButton').className = 'button button-success';
+                updateStatus('Recording stopped', 'info');
+                addToTranscript('⏸️ Stopped recording audio', 'warning');
+            }
+        }
+
+        function sendTestKeywords() {
+            if (!currentCustomerId) {
+                updateStatus('Please start a customer first', 'error');
+                return;
+            }
+
+            // Simulate keyword detection
+            addToTranscript('🧪 Simulating keywords: "xin chào" and "xin lỗi"', 'keyword');
+
+            setTimeout(() => {
+                addToTranscript('🎉 KEYWORD DETECTED: SAY_HELLO', 'api');
+            }, 500);
+
+            setTimeout(() => {
+                addToTranscript('😔 KEYWORD DETECTED: SAY_SORRY', 'api');
+            }, 1000);
+
+            setTimeout(() => {
+                addToTranscript('✅ API calls completed', 'api');
+            }, 1500);
+        }
+
+        // Initialize
+        generateNewUUID();
+        updateSessionInfo();
+    </script>
+</body>
+</html>
