@@ -219,7 +219,7 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
     global transcription_engine, active_sessions
 
     await websocket.accept()
-    logger.info("🎤 Multi-camera WebSocket connection opened.")
+    logger.info(" Multi-camera WebSocket connection opened.")
 
     session_uuid = None
     customer_id = None
@@ -301,7 +301,7 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                         }
                     })
 
-                    logger.info(f"🚀 Audio stream started - Session: {session_uuid}, Customer: {customer_id}, Stream: {stream_id}, Codec: {codec}")
+                    logger.info(f" Audio stream started - Session: {session_uuid}, Customer: {customer_id}, Stream: {stream_id}, Codec: {codec}")
                     stream_started = True
 
                     # Start processing tasks
@@ -324,11 +324,11 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                     chunk_ts = chunk_data.get("ts")
                     duration_hint = chunk_data.get("duration_ms_hint", 250)
 
-                    logger.debug(f"📦 Audio chunk meta - Seq: {seq}, TS: {chunk_ts}, Duration: {duration_hint}ms")
+                    logger.debug(f" Audio chunk meta - Seq: {seq}, TS: {chunk_ts}, Duration: {duration_hint}ms")
 
                     # Check sequence order
                     if seq != expected_seq and expected_seq > 1:
-                        logger.warning(f"⚠️ Sequence mismatch - Expected: {expected_seq}, Got: {seq}")
+                        logger.warning(f" Sequence mismatch - Expected: {expected_seq}, Got: {seq}")
 
                     expected_seq = seq + 1
 
@@ -346,7 +346,7 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                     stop_stream_id = stop_data.get("stream_id")
                     reason = stop_data.get("reason", "user_stopped")
 
-                    logger.info(f"🛑 Audio stream stop - Session: {stop_session_uuid}, Customer: {stop_customer_id}, Stream: {stop_stream_id}, Reason: {reason}")
+                    logger.info(f" Audio stream stop - Session: {stop_session_uuid}, Customer: {stop_customer_id}, Stream: {stop_stream_id}, Reason: {reason}")
 
                     # Mark customer as stopped in session
                     if session_uuid in active_sessions and customer_id in active_sessions[session_uuid]["customers"]:
@@ -386,11 +386,11 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                     })
 
     except WebSocketDisconnect:
-        logger.info(f"🔌 WebSocket disconnected for session {session_uuid}, stream {stream_id}")
+        logger.info(f" WebSocket disconnected for session {session_uuid}, stream {stream_id}")
     except Exception as e:
-        logger.error(f"❌ Unexpected error in multicam endpoint: {e}", exc_info=True)
+        logger.error(f" Unexpected error in multicam endpoint: {e}", exc_info=True)
     finally:
-        logger.info(f"🧹 Cleaning up session {session_uuid}, customer {customer_id}...")
+        logger.info(f" Cleaning up session {session_uuid}, customer {customer_id}...")
 
         # Cleanup customer from session
         if session_uuid and session_uuid in active_sessions and customer_id:
@@ -415,15 +415,15 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
             if websocket_task:
                 await websocket_task
         except asyncio.CancelledError:
-            logger.info(f"📋 WebSocket results handler task cancelled for session {session_uuid}")
+            logger.info(f" WebSocket results handler task cancelled for session {session_uuid}")
         except Exception as e:
-            logger.warning(f"⚠️ Exception while awaiting websocket_task: {e}")
+            logger.warning(f" Exception while awaiting websocket_task: {e}")
 
         # Cleanup audio processor
         if audio_processor:
             await audio_processor.cleanup()
 
-        logger.info(f"✅ Multi-customer session {session_uuid}, customer {customer_id} cleaned up successfully.")
+        logger.info(f" Multi-customer session {session_uuid}, customer {customer_id} cleaned up successfully.")
 
 
 
