@@ -69,23 +69,17 @@ async def call_experience_event_api(customer_id: str, event: str):
         "EVENT": event
     }
 
-    logger.info(f"🚀 API REQUEST: Calling {api_url} with payload: {payload}")
+    logger.info("API REQUEST: Calling %s with payload: %s", api_url, payload)
 
     try:
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession() as session:
             async with session.post(api_url, json=payload) as response:
-                response_text = await response.text()
                 if response.status == 200:
-                    logger.info(f"✅ API SUCCESS: {event} for customer {customer_id} - Response: {response_text}")
+                    logger.info("API SUCCESS: %s for customer %s", event, customer_id)
                 else:
-                    logger.warning(f"⚠️ API ERROR: HTTP {response.status} for {event} - customer {customer_id} - Response: {response_text}")
-    except asyncio.TimeoutError:
-        logger.error(f"⏰ API TIMEOUT: {event} for customer {customer_id} - Request took longer than 10 seconds")
-    except aiohttp.ClientError as e:
-        logger.error(f"🌐 API CONNECTION ERROR: {event} for customer {customer_id} - Error: {e}")
+                    logger.warning("API ERROR: HTTP %s for %s - customer %s", response.status, event, customer_id)
     except Exception as e:
-        logger.error(f"❌ API CALL FAILED: {event} for customer {customer_id} - Unexpected error: {e}")
+        logger.error("API CALL FAILED: %s for customer %s - Error: %s", event, customer_id, str(e))
 
 
 async def handle_websocket_results_multicam(websocket, results_generator, session_uuid, stream_id, customer_id):
