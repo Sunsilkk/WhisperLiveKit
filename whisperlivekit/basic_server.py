@@ -16,7 +16,8 @@ logger.setLevel(logging.DEBUG)
 
 args = parse_args()
 transcription_engine = None
-# Store active sessions for multi-camera support
+# Store active sessions for multi-customer support
+# Structure: session_uuid -> {customers: {customer_id: {...}}, session_info: {...}}
 active_sessions: Dict[str, Dict] = {}
 
 @asynccontextmanager
@@ -55,7 +56,7 @@ async def handle_websocket_results(websocket, results_generator):
         logger.error(f"Error in WebSocket results handler: {e}")
 
 
-async def handle_websocket_results_multicam(websocket, results_generator, session_uuid, stream_id):
+async def handle_websocket_results_multicam(websocket, results_generator, session_uuid, stream_id, customer_id):
     """Enhanced results handler with transcript logging and keyword detection."""
     try:
         async for response in results_generator:
@@ -64,43 +65,45 @@ async def handle_websocket_results_multicam(websocket, results_generator, sessio
                 for line in response["lines"]:
                     transcript_text = line.get("text", "")
                     speaker = line.get("speaker", 0)
-                    logger.info(f"🗣️ TRANSCRIPT [{session_uuid}][{stream_id}] Speaker {speaker}: {transcript_text}")
+                    logger.info(f"🗣️ TRANSCRIPT [{session_uuid}][{customer_id}][{stream_id}] Speaker {speaker}: {transcript_text}")
 
                     # Keyword detection for experience events
                     transcript_lower = transcript_text.lower()
                     if "xin chào" in transcript_lower:
-                        logger.info(f"🎉 KEYWORD DETECTED: SAY_HELLO in session {session_uuid}")
+                        logger.info(f"🎉 KEYWORD DETECTED: SAY_HELLO - Session: {session_uuid}, Customer: {customer_id}")
                         # TODO: Call experience-event API here
-                        # await call_experience_event_api(session_uuid, "SAY_HELLO", transcript_text)
+                        # await call_experience_event_api(session_uuid, customer_id, "SAY_HELLO", transcript_text)
                     elif "xin lỗi" in transcript_lower:
-                        logger.info(f"😔 KEYWORD DETECTED: SAY_SORRY in session {session_uuid}")
+                        logger.info(f"😔 KEYWORD DETECTED: SAY_SORRY - Session: {session_uuid}, Customer: {customer_id}")
                         # TODO: Call experience-event API here
-                        # await call_experience_event_api(session_uuid, "SAY_SORRY", transcript_text)
+                        # await call_experience_event_api(session_uuid, customer_id, "SAY_SORRY", transcript_text)
 
             # Log buffer content for debugging
             if "buffer_transcription" in response and response["buffer_transcription"]:
-                logger.debug(f"📝 BUFFER [{session_uuid}]: {response['buffer_transcription']}")
+                logger.debug(f"📝 BUFFER [{session_uuid}][{customer_id}]: {response['buffer_transcription']}")
 
             # Add session metadata to response
             enhanced_response = {
                 **response,
                 "session_uuid": session_uuid,
+                "customer_id": customer_id,
                 "stream_id": stream_id,
                 "timestamp": asyncio.get_event_loop().time()
             }
             await websocket.send_json(enhanced_response)
 
         # Send final message with session info
-        logger.info(f"✅ Results generator finished for session {session_uuid}, stream {stream_id}")
+        logger.info(f"✅ Results generator finished for session {session_uuid}, customer {customer_id}, stream {stream_id}")
         await websocket.send_json({
             "type": "ready_to_stop",
             "data": {
                 "session_uuid": session_uuid,
+                "customer_id": customer_id,
                 "stream_id": stream_id
             }
         })
     except WebSocketDisconnect:
-        logger.info(f"🔌 WebSocket disconnected for session {session_uuid}, stream {stream_id}")
+        logger.info(f"🔌 WebSocket disconnected for session {session_uuid}, customer {customer_id}, stream {stream_id}")
     except Exception as e:
         logger.error(f"❌ Error in multicam WebSocket results handler: {e}")
 
@@ -148,13 +151,15 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.websocket("/asr-multicam")
 async def websocket_multicam_endpoint(websocket: WebSocket):
     """
-    Enhanced WebSocket endpoint with new audio stream schema.
+    Enhanced WebSocket endpoint with multi-customer session support.
 
     Expected message formats:
-    1. audio_stream_start - Initialize session with audio params
+    1. audio_stream_start - Initialize customer stream within session
     2. audio_chunk_meta - Metadata before each audio chunk
     3. Binary audio data - Actual audio chunks
-    4. audio_stream_stop - End session
+    4. audio_stream_stop - End customer stream
+
+    Multiple customers can share the same session_uuid with different customer_id/stream_id
     """
     global transcription_engine, active_sessions
 
@@ -162,6 +167,7 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
     logger.info("🎤 Multi-camera WebSocket connection opened.")
 
     session_uuid = None
+    customer_id = None
     stream_id = None
     audio_processor = None
     websocket_task = None
@@ -177,9 +183,10 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                 message_type = data.get("type")
 
                 if message_type == "audio_stream_start":
-                    # Initialize audio stream
+                    # Initialize audio stream for customer
                     stream_data = data.get("data", {})
                     session_uuid = stream_data.get("session_uuid") or str(uuid_lib.uuid4())
+                    customer_id = stream_data.get("customer_id") or stream_data.get("stream_id")  # fallback to stream_id
                     stream_id = stream_data.get("stream_id")
                     codec = stream_data.get("codec", "audio/webm;codecs=opus")
                     sample_rate = stream_data.get("sample_rate", 48000)
@@ -194,8 +201,25 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                         })
                         continue
 
-                    # Store session info
-                    active_sessions[session_uuid] = {
+                    if not customer_id:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "customer_id is required in audio_stream_start"
+                        })
+                        continue
+
+                    # Initialize session if not exists
+                    if session_uuid not in active_sessions:
+                        active_sessions[session_uuid] = {
+                            "customers": {},
+                            "session_info": {
+                                "start_time": asyncio.get_event_loop().time(),
+                                "status": "active"
+                            }
+                        }
+
+                    # Store customer info within session
+                    active_sessions[session_uuid]["customers"][customer_id] = {
                         "stream_id": stream_id,
                         "codec": codec,
                         "sample_rate": sample_rate,
@@ -216,18 +240,19 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                         "type": "audio_stream_ready",
                         "data": {
                             "session_uuid": session_uuid,
+                            "customer_id": customer_id,
                             "stream_id": stream_id,
                             "message": "Audio stream initialized successfully"
                         }
                     })
 
-                    logger.info(f"🚀 Audio stream started - UUID: {session_uuid}, Stream: {stream_id}, Codec: {codec}")
+                    logger.info(f"🚀 Audio stream started - Session: {session_uuid}, Customer: {customer_id}, Stream: {stream_id}, Codec: {codec}")
                     stream_started = True
 
                     # Start processing tasks
                     results_generator = await audio_processor.create_tasks()
                     websocket_task = asyncio.create_task(
-                        handle_websocket_results_multicam(websocket, results_generator, session_uuid, stream_id)
+                        handle_websocket_results_multicam(websocket, results_generator, session_uuid, stream_id, customer_id)
                     )
 
                 elif message_type == "audio_chunk_meta":
@@ -259,13 +284,19 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                         logger.debug(f"🎵 Processed audio chunk - {len(audio_data)} bytes")
 
                 elif message_type == "audio_stream_stop":
-                    # Stop audio stream
+                    # Stop audio stream for customer
                     stop_data = data.get("data", {})
                     stop_session_uuid = stop_data.get("session_uuid")
+                    stop_customer_id = stop_data.get("customer_id")
                     stop_stream_id = stop_data.get("stream_id")
                     reason = stop_data.get("reason", "user_stopped")
 
-                    logger.info(f"🛑 Audio stream stop - UUID: {stop_session_uuid}, Stream: {stop_stream_id}, Reason: {reason}")
+                    logger.info(f"🛑 Audio stream stop - Session: {stop_session_uuid}, Customer: {stop_customer_id}, Stream: {stop_stream_id}, Reason: {reason}")
+
+                    # Mark customer as stopped in session
+                    if session_uuid in active_sessions and customer_id in active_sessions[session_uuid]["customers"]:
+                        active_sessions[session_uuid]["customers"][customer_id]["status"] = "stopped"
+                        active_sessions[session_uuid]["customers"][customer_id]["end_time"] = asyncio.get_event_loop().time()
 
                     # Send final empty audio to trigger processing completion
                     if audio_processor:
@@ -275,6 +306,7 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
                         "type": "audio_stream_stopped",
                         "data": {
                             "session_uuid": session_uuid,
+                            "customer_id": customer_id,
                             "stream_id": stream_id,
                             "message": "Audio stream stopped successfully"
                         }
@@ -303,12 +335,23 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"❌ Unexpected error in multicam endpoint: {e}", exc_info=True)
     finally:
-        logger.info(f"🧹 Cleaning up session {session_uuid}...")
+        logger.info(f"🧹 Cleaning up session {session_uuid}, customer {customer_id}...")
 
-        # Cleanup session
-        if session_uuid and session_uuid in active_sessions:
-            active_sessions[session_uuid]["status"] = "closed"
-            active_sessions[session_uuid]["end_time"] = asyncio.get_event_loop().time()
+        # Cleanup customer from session
+        if session_uuid and session_uuid in active_sessions and customer_id:
+            if customer_id in active_sessions[session_uuid]["customers"]:
+                active_sessions[session_uuid]["customers"][customer_id]["status"] = "closed"
+                active_sessions[session_uuid]["customers"][customer_id]["end_time"] = asyncio.get_event_loop().time()
+
+                # Check if all customers are closed, then close session
+                all_customers_closed = all(
+                    customer["status"] in ["closed", "stopped"]
+                    for customer in active_sessions[session_uuid]["customers"].values()
+                )
+                if all_customers_closed:
+                    active_sessions[session_uuid]["session_info"]["status"] = "closed"
+                    active_sessions[session_uuid]["session_info"]["end_time"] = asyncio.get_event_loop().time()
+                    logger.info(f"🏁 Session {session_uuid} fully closed - all customers disconnected")
 
         # Cancel websocket task
         if websocket_task and not websocket_task.done():
@@ -325,7 +368,7 @@ async def websocket_multicam_endpoint(websocket: WebSocket):
         if audio_processor:
             await audio_processor.cleanup()
 
-        logger.info(f"✅ Multi-camera session {session_uuid} cleaned up successfully.")
+        logger.info(f"✅ Multi-customer session {session_uuid}, customer {customer_id} cleaned up successfully.")
 
 
 

@@ -30,17 +30,18 @@ Initialize audio stream with session parameters.
 {
   "type": "audio_stream_start",
   "data": {
-    "session_uuid": "abc-123-def-456",           // Optional: auto-generated if not provided
-    "stream_id": "camera_001",                   // Required: unique stream identifier
+    "session_uuid": "store_session_001",         // Required: shared session for multiple customers
+    "customer_id": "customer_nguyen_van_a",      // Required: unique customer identifier
+    "stream_id": "mic_table_01",                 // Required: unique stream identifier
     "codec": "audio/webm;codecs=opus",           // Required: audio codec
     "channel_count": 1,                          // Required: audio channels
     "sample_rate": 48000,                        // Required: sample rate in Hz
     "timeslice_ms": 250,                         // Required: chunk duration in ms
     "client_ts": 1723960000000,                  // Required: client timestamp (ms)
     "metadata": {                                // Optional: additional metadata
-      "camera_name": "Front Door Camera",
-      "location": "Main Entrance",
-      "user_id": "user_123"
+      "customer_name": "Nguyễn Văn A",
+      "table_number": "01",
+      "location": "Main Hall"
     }
   }
 }
@@ -53,8 +54,9 @@ Metadata sent before each audio chunk.
 {
   "type": "audio_chunk_meta",
   "data": {
-    "session_uuid": "abc-123-def-456",          // Required: session identifier
-    "stream_id": "camera_001",                  // Required: stream identifier
+    "session_uuid": "store_session_001",        // Required: session identifier
+    "customer_id": "customer_nguyen_van_a",     // Required: customer identifier
+    "stream_id": "mic_table_01",                // Required: stream identifier
     "seq": 1234,                                // Required: sequence number (starts from 1)
     "ts": 1723960000250,                        // Required: client timestamp (ms)
     "codec": "audio/webm;codecs=opus",          // Required: audio codec
@@ -75,9 +77,10 @@ End the audio stream session.
 {
   "type": "audio_stream_stop",
   "data": {
-    "session_uuid": "abc-123-def-456",          // Required: session identifier
-    "stream_id": "camera_001",                  // Required: stream identifier
-    "reason": "user_stopped"                    // Optional: stop reason
+    "session_uuid": "store_session_001",        // Required: session identifier
+    "customer_id": "customer_nguyen_van_a",     // Required: customer identifier
+    "stream_id": "mic_table_01",                // Required: stream identifier
+    "reason": "customer_left"                   // Optional: stop reason
   }
 }
 ```
@@ -93,8 +96,9 @@ Confirmation that stream is initialized and ready.
 {
   "type": "audio_stream_ready",
   "data": {
-    "session_uuid": "abc-123-def-456",
-    "stream_id": "camera_001",
+    "session_uuid": "store_session_001",
+    "customer_id": "customer_nguyen_van_a",
+    "stream_id": "mic_table_01",
     "message": "Audio stream initialized successfully"
   }
 }
@@ -108,7 +112,7 @@ Real-time transcription results with session metadata.
   "lines": [
     {
       "speaker": 1,
-      "text": "xin chào, tôi là AI assistant",
+      "text": "xin chào, tôi là khách hàng",
       "beg": 0.5,
       "end": 2.8
     }
@@ -118,8 +122,9 @@ Real-time transcription results with session metadata.
   "remaining_time_transcription": 0.3,
   "remaining_time_diarization": 0.8,
   "status": "active_transcription",
-  "session_uuid": "abc-123-def-456",
-  "stream_id": "camera_001",
+  "session_uuid": "store_session_001",
+  "customer_id": "customer_nguyen_van_a",
+  "stream_id": "mic_table_01",
   "timestamp": 1642781234.567
 }
 ```
@@ -131,8 +136,9 @@ Final processing complete signal.
 {
   "type": "ready_to_stop",
   "data": {
-    "session_uuid": "abc-123-def-456",
-    "stream_id": "camera_001"
+    "session_uuid": "store_session_001",
+    "customer_id": "customer_nguyen_van_a",
+    "stream_id": "mic_table_01"
   }
 }
 ```
@@ -144,8 +150,9 @@ Confirmation that stream has been stopped.
 {
   "type": "audio_stream_stopped",
   "data": {
-    "session_uuid": "abc-123-def-456",
-    "stream_id": "camera_001",
+    "session_uuid": "store_session_001",
+    "customer_id": "customer_nguyen_van_a",
+    "stream_id": "mic_table_01",
     "message": "Audio stream stopped successfully"
   }
 }
@@ -157,7 +164,7 @@ Error responses for invalid requests.
 ```json
 {
   "type": "error",
-  "message": "stream_id is required in audio_stream_start"
+  "message": "customer_id is required in audio_stream_start"
 }
 ```
 
@@ -168,16 +175,23 @@ Error responses for invalid requests.
 ### **Transcript Logging**
 Server logs all transcriptions to terminal with emojis:
 ```
-🗣️ TRANSCRIPT [session-uuid][stream-id] Speaker 1: xin chào các bạn
-🎉 KEYWORD DETECTED: SAY_HELLO in session abc-123-def
-😔 KEYWORD DETECTED: SAY_SORRY in session abc-123-def
-📝 BUFFER [session-uuid]: đang xử lý âm thanh...
+🗣️ TRANSCRIPT [store_session_001][customer_nguyen_van_a][mic_table_01] Speaker 1: xin chào các bạn
+🎉 KEYWORD DETECTED: SAY_HELLO - Session: store_session_001, Customer: customer_nguyen_van_a
+😔 KEYWORD DETECTED: SAY_SORRY - Session: store_session_001, Customer: customer_nguyen_van_a
+📝 BUFFER [store_session_001][customer_nguyen_van_a]: đang xử lý âm thanh...
+🏁 Session store_session_001 fully closed - all customers disconnected
 ```
 
 ### **Keyword Detection**
 Automatic detection of Vietnamese keywords:
 - **"xin chào"** → Triggers `SAY_HELLO` event
 - **"xin lỗi"** → Triggers `SAY_SORRY` event
+
+### **Multi-Customer Session Management**
+- **1 session_uuid** can handle **multiple customers** simultaneously
+- Each customer has unique `customer_id` and `stream_id`
+- Session closes only when **all customers** disconnect
+- Individual customer tracking within shared sessions
 
 ### **Sequence Tracking**
 Server validates sequence numbers and warns about missing chunks:
@@ -197,16 +211,18 @@ websocket.onopen = () => {
   const startMessage = {
     type: "audio_stream_start",
     data: {
-      session_uuid: "my-session-123",
-      stream_id: "camera_front_door",
+      session_uuid: "restaurant_table_session",
+      customer_id: "customer_nguyen_van_a",
+      stream_id: "mic_table_05",
       codec: "audio/webm;codecs=opus",
       channel_count: 1,
       sample_rate: 48000,
       timeslice_ms: 250,
       client_ts: Date.now(),
       metadata: {
-        camera_name: "Front Door",
-        location: "Entrance"
+        customer_name: "Nguyễn Văn A",
+        table_number: "05",
+        location: "Main Hall"
       }
     }
   };
@@ -247,8 +263,9 @@ function sendAudioChunk(audioBlob) {
   const metaMessage = {
     type: "audio_chunk_meta",
     data: {
-      session_uuid: "my-session-123",
-      stream_id: "camera_front_door",
+      session_uuid: "restaurant_table_session",
+      customer_id: "customer_nguyen_van_a",
+      stream_id: "mic_table_05",
       seq: sequenceNumber++,
       ts: Date.now(),
       codec: "audio/webm;codecs=opus",
@@ -267,9 +284,10 @@ function stopStream() {
   const stopMessage = {
     type: "audio_stream_stop",
     data: {
-      session_uuid: "my-session-123",
-      stream_id: "camera_front_door",
-      reason: "user_stopped"
+      session_uuid: "restaurant_table_session",
+      customer_id: "customer_nguyen_van_a",
+      stream_id: "mic_table_05",
+      reason: "customer_left"
     }
   };
   websocket.send(JSON.stringify(stopMessage));
@@ -288,8 +306,9 @@ import time
 
 async def audio_stream_client():
     uri = "ws://localhost:8000/asr-multicam"
-    session_uuid = "python-session-456"
-    stream_id = "camera_python_test"
+    session_uuid = "python-test-session"
+    customer_id = "customer_python_test"
+    stream_id = "mic_python_test"
 
     async with websockets.connect(uri) as websocket:
         # Step 1: Initialize stream
@@ -297,6 +316,7 @@ async def audio_stream_client():
             "type": "audio_stream_start",
             "data": {
                 "session_uuid": session_uuid,
+                "customer_id": customer_id,
                 "stream_id": stream_id,
                 "codec": "audio/webm;codecs=opus",
                 "channel_count": 1,
@@ -304,7 +324,7 @@ async def audio_stream_client():
                 "timeslice_ms": 250,
                 "client_ts": int(time.time() * 1000),
                 "metadata": {
-                    "camera_name": "Python Test Camera",
+                    "customer_name": "Python Test Customer",
                     "location": "Development Lab"
                 }
             }
@@ -334,6 +354,7 @@ async def audio_stream_client():
                         "type": "audio_chunk_meta",
                         "data": {
                             "session_uuid": session_uuid,
+                            "customer_id": customer_id,
                             "stream_id": stream_id,
                             "seq": seq,
                             "ts": int(time.time() * 1000),
@@ -364,6 +385,7 @@ async def audio_stream_client():
                 "type": "audio_stream_stop",
                 "data": {
                     "session_uuid": session_uuid,
+                    "customer_id": customer_id,
                     "stream_id": stream_id,
                     "reason": "file_complete"
                 }
@@ -387,19 +409,29 @@ asyncio.run(audio_stream_client())
 1. **Message Order**: Must send `audio_stream_start` before any audio data
 2. **Sequence Numbers**: Start from 1, increment for each chunk
 3. **Binary Data**: Send immediately after `audio_chunk_meta`
-4. **Session Management**: Each session_uuid can handle one active stream
-5. **Error Handling**: Server validates all required fields
-6. **Keyword Detection**: Automatic detection triggers logging (API integration pending)
-7. **Multi-Stream**: Multiple streams can run simultaneously with different session_uuid
+4. **Multi-Customer Sessions**: One session_uuid can handle multiple customers
+5. **Customer Identification**: Each customer needs unique `customer_id` and `stream_id`
+6. **Error Handling**: Server validates all required fields
+7. **Keyword Detection**: Automatic detection triggers logging (API integration pending)
+8. **Session Lifecycle**: Session closes when ALL customers disconnect
 
 ---
 
 ## 🎯 **Use Cases**
 
-- **Multi-camera surveillance** with individual session tracking
-- **Conference systems** with multiple microphone feeds
-- **Smart retail** with zone-based audio analysis
-- **Contact centers** with call session management
-- **IoT devices** with structured audio streaming
+- **Restaurant/Café**: Multiple customers per table session
+- **Conference rooms**: Multiple participants in one meeting session
+- **Retail stores**: Multiple customers in same shopping session
+- **Contact centers**: Multiple agents handling same case session
+- **Event venues**: Multiple attendees in same event session
+
+### 🏪 **Restaurant Example**
+```
+Session: "restaurant_table_05_evening"
+├── Customer A: "customer_nguyen_van_a" → stream "mic_seat_01"
+├── Customer B: "customer_tran_thi_b" → stream "mic_seat_02"
+├── Customer C: "customer_le_van_c" → stream "mic_seat_03"
+└── Waiter: "staff_001" → stream "mic_waiter_headset"
+```
 
 This schema provides production-ready audio streaming with comprehensive session management and monitoring capabilities.
