@@ -72,14 +72,15 @@ async def call_experience_event_api(customer_id: str, event: str):
     logger.info(f"🚀 API REQUEST: Calling {api_url} with payload: {payload}")
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(api_url, json=payload, timeout=10) as response:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(api_url, json=payload) as response:
                 response_text = await response.text()
                 if response.status == 200:
                     logger.info(f"✅ API SUCCESS: {event} for customer {customer_id} - Response: {response_text}")
                 else:
                     logger.warning(f"⚠️ API ERROR: HTTP {response.status} for {event} - customer {customer_id} - Response: {response_text}")
-    except aiohttp.ClientTimeout:
+    except asyncio.TimeoutError:
         logger.error(f"⏰ API TIMEOUT: {event} for customer {customer_id} - Request took longer than 10 seconds")
     except aiohttp.ClientError as e:
         logger.error(f"🌐 API CONNECTION ERROR: {event} for customer {customer_id} - Error: {e}")
