@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+import os
 from typing import Optional
 
 import httpx
@@ -19,8 +20,8 @@ args = parse_args()
 transcription_engine = None
 
 
-API_BASE = "http://localhost:4000/api/v1/experience-event"
-ACTOR_ID = "2222a8c2-13f4-4e7a-9ab3-1ee3ffffabcd"
+API_BASE = os.getenv("API_BASE")
+ACTOR_ID = os.getenv("ACTOR_ID")
 
 
 @asynccontextmanager
@@ -45,6 +46,25 @@ app.add_middleware(
 @app.get("/")
 async def get():
     return HTMLResponse(get_web_interface_html())
+
+
+async def handle_websocket_results(
+    websocket,
+    results_generator,
+    camera_id: Optional[str] = None,
+):
+    try:
+        async for response in results_generator:
+            await websocket.send_json(response)
+
+        logger.info("Results generator finished. Sending 'ready_to_stop' to client.")
+        await websocket.send_json({"type": "ready_to_stop"})
+
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected (camera_id={camera_id})")
+
+    except Exception as e:
+        logger.error(f"Error in WebSocket results handler (camera_id={camera_id}): {e}")
 
 
 async def save_event_to_db(
@@ -104,7 +124,7 @@ async def save_event_to_db(
             logger.error(f"Error saving event to DB: {e}")
 
 
-async def handle_websocket_results(
+async def handle_websocket_results_v2(
     websocket,
     results_generator,
     camera_id: Optional[str] = None,
@@ -154,10 +174,7 @@ async def handle_websocket_results(
 
 
 @app.websocket("/asr")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    camera_id: Optional[str] = Query(None, description="The unique ID of camera"),
-):
+async def websocket_endpoint(websocket: WebSocket):
     global transcription_engine
     audio_processor = AudioProcessor(
         transcription_engine=transcription_engine,
@@ -166,7 +183,7 @@ async def websocket_endpoint(
     logger.info("WebSocket connection opened.")
 
     results_generator = await audio_processor.create_tasks()
-    websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator, camera_id))
+    websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator))
 
     try:
         while True:
@@ -193,6 +210,54 @@ async def websocket_endpoint(
             await websocket_task
         except asyncio.CancelledError:
             logger.info("WebSocket results handler task was cancelled.")
+        except Exception as e:
+            logger.warning(f"Exception while awaiting websocket_task completion: {e}")
+
+        await audio_processor.cleanup()
+        logger.info("WebSocket endpoint cleaned up successfully.")
+
+
+@app.websocket("/asr-v2")
+async def websocket_endpoint_v2(
+    websocket: WebSocket,
+    camera_id: Optional[str] = Query(None, description="The unique ID of camera"),
+):
+    global transcription_engine
+    audio_processor = AudioProcessor(
+        transcription_engine=transcription_engine,
+    )
+    await websocket.accept()
+    logger.info("WebSocket connection opened.")
+
+    results_generator = await audio_processor.create_tasks()
+    websocket_task = asyncio.create_task(handle_websocket_results_v2(websocket, results_generator, camera_id))
+
+    try:
+        while True:
+            message = await websocket.receive_bytes()
+            await audio_processor.process_audio(message)
+
+    except KeyError as e:
+        if "bytes" in str(e):
+            logger.warning("Client has closed the connection.")
+        else:
+            logger.error(f"Unexpected KeyError in websocket_endpoint: {e}", exc_info=True)
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected by client during message receiving loop.")
+
+    except Exception as e:
+        logger.error(f"Unexpected error in websocket_endpoint main loop: {e}", exc_info=True)
+
+    finally:
+        logger.info("Cleaning up WebSocket endpoint...")
+        if not websocket_task.done():
+            websocket_task.cancel()
+        try:
+            await websocket_task
+        except asyncio.CancelledError:
+            logger.info("WebSocket results handler task was cancelled.")
+
         except Exception as e:
             logger.warning(f"Exception while awaiting websocket_task completion: {e}")
 
