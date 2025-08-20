@@ -8,6 +8,8 @@ import logging
 import json
 from typing import Dict
 import uuid as uuid_lib
+import aiohttp
+import time
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger().setLevel(logging.WARNING)
@@ -19,6 +21,8 @@ transcription_engine = None
 # Store active sessions for multi-customer support
 # Structure: session_uuid -> {customers: {customer_id: {...}}, session_info: {...}}
 active_sessions: Dict[str, Dict] = {}
+# Track customer transcripts and keyword detection
+customer_data: Dict[str, Dict] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -56,8 +60,46 @@ async def handle_websocket_results(websocket, results_generator):
         logger.error(f"Error in WebSocket results handler: {e}")
 
 
+async def call_experience_event_api(customer_id: str, event: str):
+    """Call the experience-event API with customer ID and event type."""
+    api_url = "http://192.168.10.213:4000/api/v1/experience-event"
+
+    payload = {
+        "UUID": customer_id,
+        "EVENT": event
+    }
+
+    logger.info(f"🚀 API REQUEST: Calling {api_url} with payload: {payload}")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, json=payload, timeout=10) as response:
+                response_text = await response.text()
+                if response.status == 200:
+                    logger.info(f"✅ API SUCCESS: {event} for customer {customer_id} - Response: {response_text}")
+                else:
+                    logger.warning(f"⚠️ API ERROR: HTTP {response.status} for {event} - customer {customer_id} - Response: {response_text}")
+    except aiohttp.ClientTimeout:
+        logger.error(f"⏰ API TIMEOUT: {event} for customer {customer_id} - Request took longer than 10 seconds")
+    except aiohttp.ClientError as e:
+        logger.error(f"🌐 API CONNECTION ERROR: {event} for customer {customer_id} - Error: {e}")
+    except Exception as e:
+        logger.error(f"❌ API CALL FAILED: {event} for customer {customer_id} - Unexpected error: {e}")
+
+
 async def handle_websocket_results_multicam(websocket, results_generator, session_uuid, stream_id, customer_id):
     """Enhanced results handler with transcript logging and keyword detection."""
+
+    # Initialize customer data if not exists
+    if customer_id not in customer_data:
+        customer_data[customer_id] = {
+            "detected_keywords": set(),
+            "full_transcript": [],
+            "start_time": time.time()
+        }
+
+    customer_info = customer_data[customer_id]
+
     try:
         async for response in results_generator:
             # Log transcript for monitoring
@@ -67,16 +109,21 @@ async def handle_websocket_results_multicam(websocket, results_generator, sessio
                     speaker = line.get("speaker", 0)
                     logger.info(f"🗣️ TRANSCRIPT [{session_uuid}][{customer_id}][{stream_id}] Speaker {speaker}: {transcript_text}")
 
+                    # Add to customer's full transcript
+                    customer_info["full_transcript"].append(transcript_text)
+
                     # Keyword detection for experience events
                     transcript_lower = transcript_text.lower()
-                    if "xin chào" in transcript_lower:
+                    if "xin chào" in transcript_lower and "SAY_HELLO" not in customer_info["detected_keywords"]:
                         logger.info(f"🎉 KEYWORD DETECTED: SAY_HELLO - Session: {session_uuid}, Customer: {customer_id}")
-                        # TODO: Call experience-event API here
-                        # await call_experience_event_api(session_uuid, customer_id, "SAY_HELLO", transcript_text)
-                    elif "xin lỗi" in transcript_lower:
+                        customer_info["detected_keywords"].add("SAY_HELLO")
+                        task = asyncio.create_task(call_experience_event_api(customer_id, "SAY_HELLO"))
+                        task.add_done_callback(lambda t: logger.debug(f"SAY_HELLO API task completed for {customer_id}"))
+                    elif "xin lỗi" in transcript_lower and "SAY_SORRY" not in customer_info["detected_keywords"]:
                         logger.info(f"😔 KEYWORD DETECTED: SAY_SORRY - Session: {session_uuid}, Customer: {customer_id}")
-                        # TODO: Call experience-event API here
-                        # await call_experience_event_api(session_uuid, customer_id, "SAY_SORRY", transcript_text)
+                        customer_info["detected_keywords"].add("SAY_SORRY")
+                        task = asyncio.create_task(call_experience_event_api(customer_id, "SAY_SORRY"))
+                        task.add_done_callback(lambda t: logger.debug(f"SAY_SORRY API task completed for {customer_id}"))
 
             # Log buffer content for debugging
             if "buffer_transcription" in response and response["buffer_transcription"]:
@@ -94,6 +141,19 @@ async def handle_websocket_results_multicam(websocket, results_generator, sessio
 
         # Send final message with session info
         logger.info(f"✅ Results generator finished for session {session_uuid}, customer {customer_id}, stream {stream_id}")
+
+        # Call session end API
+        logger.info(f"🏁 SESSION END: Calling API for customer {customer_id}")
+        full_transcript_text = " ".join(customer_info["full_transcript"]) if customer_id in customer_data else ""
+        logger.info(f"📝 FULL TRANSCRIPT [{customer_id}]: {full_transcript_text}")
+        task = asyncio.create_task(call_experience_event_api(customer_id, "SESSION_END"))
+        task.add_done_callback(lambda t: logger.debug(f"SESSION_END API task completed for {customer_id}"))
+
+        # Cleanup customer data
+        if customer_id in customer_data:
+            del customer_data[customer_id]
+            logger.debug(f"🗑️ Cleaned up customer data for {customer_id}")
+
         await websocket.send_json({
             "type": "ready_to_stop",
             "data": {
