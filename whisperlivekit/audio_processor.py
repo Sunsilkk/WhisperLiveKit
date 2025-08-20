@@ -381,7 +381,7 @@ class AudioProcessor:
 
                 if type(item) is Silence:
                     cumulative_pcm_duration_stream_time += item.duration
-                    # self.diarization_obj.insert_silence(item.duration, self.tokens[-1].end)
+                    diarization_obj.insert_silence(item.duration)
                     if self.diarization_queue:
                         self.diarization_queue.task_done()
                     continue

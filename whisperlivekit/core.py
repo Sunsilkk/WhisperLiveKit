@@ -57,7 +57,7 @@ class TranscriptionEngine:
             "static_init_prompt": None,
             "max_context_tokens": None,
             "model_path": './base.pt',
-            "diarization_backend": "sortformer",
+            "diarization_backend": "diart",
             # diart params:
             "segmentation_model": "pyannote/segmentation-3.0",
             "embedding_model": "pyannote/embedding",
@@ -131,10 +131,7 @@ class TranscriptionEngine:
                     embedding_model_name=self.args.embedding_model
                 )
             elif self.args.diarization_backend == "sortformer":
-                from whisperlivekit.diarization.sortformer_backend import SortformerDiarization
-                self.diarization = SortformerDiarization(
-                    model_name="nvidia/diar_streaming_sortformer_4spk-v2"
-                )
+                raise ValueError('Sortformer backend in developement')
             else:
                 raise ValueError(f"Unknown diarization backend: {self.args.diarization_backend}")
 

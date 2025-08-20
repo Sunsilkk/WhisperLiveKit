@@ -30,6 +30,7 @@ class DiarizationObserver(Observer):
         self.speaker_segments = []
         self.processed_time = 0
         self.segment_lock = threading.Lock()
+        self.global_time_offset = 0.0
 
     def on_next(self, value: Tuple[Annotation, Any]):
         annotation, audio = value
@@ -53,19 +54,19 @@ class DiarizationObserver(Observer):
                         # Ensure start/end are scalar values, not lists
                         start_val = start
                         end_val = end
-                        
+
                         # Handle nested lists/arrays by extracting scalar values
                         while isinstance(start_val, (list, np.ndarray)) and len(start_val) > 0:
                             start_val = start_val[0]
                         while isinstance(end_val, (list, np.ndarray)) and len(end_val) > 0:
                             end_val = end_val[0]
-                        
+
                         # Ensure we have numeric values before converting to float
                         if isinstance(start_val, (int, float, np.number)) and isinstance(end_val, (int, float, np.number)):
                             self.speaker_segments.append(SpeakerSegment(
                                 speaker=speaker_id,
-                                start=float(start_val),
-                                end=float(end_val)
+                                start=float(start_val) + self.global_time_offset,
+                                end=float(end_val) + self.global_time_offset
                             ))
                         else:
                             logger.warning(f"Invalid start/end values: start={start_val}, end={end_val}")
@@ -215,6 +216,9 @@ class DiartDiarization:
         )
         self.inference.attach_observers(self.observer)
         asyncio.get_event_loop().run_in_executor(None, self.inference)
+
+    def insert_silence(self, silence_duration):
+        self.observer.global_time_offset += silence_duration
 
     async def diarize(self, pcm_array: np.ndarray):
         """
