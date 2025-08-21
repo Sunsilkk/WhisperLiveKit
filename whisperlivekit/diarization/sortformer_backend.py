@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import logging
 from whisperlivekit.timed_objects import SpeakerSegment
-from typing import Optional
+from typing import Optional, Any
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ try:
 except ImportError:
     from .whisper_streaming_custom.whisper_online import backend_factory
     from .whisper_streaming_custom.online_asr import OnlineASRProcessor
-from whisperlivekit.warmup import warmup_asr, warmup_online
+from whisperlivekit.warmup import warmup_asr
 from argparse import Namespace
 import sys
 

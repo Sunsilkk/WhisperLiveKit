@@ -9,7 +9,7 @@ from whisperlivekit.timed_objects import ASRToken, Silence
 from whisperlivekit.core import TranscriptionEngine, online_factory
 from whisperlivekit.ffmpeg_manager import FFmpegManager, FFmpegState
 from whisperlivekit.remove_silences import handle_silences
-from whisperlivekit.trail_repetition import trim_tail_repetition
+
 from whisperlivekit.silero_vad_iterator import FixedVADIterator
 # Set up logging once
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -98,6 +98,8 @@ class AudioProcessor:
         # Initialize transcription engine if enabled
         if self.args.transcription:
             self.online = online_factory(self.args, models.asr, models.tokenizer)
+        else:
+            self.online = None
 
     def convert_pcm_to_float(self, pcm_buffer):
         """Convert PCM buffer in s16le format to normalized NumPy array."""
@@ -279,7 +281,7 @@ class AudioProcessor:
 
     async def transcription_processor(self):
         """Process audio chunks for transcription."""
-        self.sep = self.online.asr.sep
+        self.sep = self.online.asr.sep if self.online else " "
         cumulative_pcm_duration_stream_time = 0.0
 
         while True:
@@ -325,15 +327,22 @@ class AudioProcessor:
 
 
 
-                self.online.insert_audio_chunk(pcm_array, stream_time_end_of_current_pcm)
-                new_tokens, current_audio_processed_upto = self.online.process_iter()
+                if self.online:
+                    self.online.insert_audio_chunk(pcm_array, stream_time_end_of_current_pcm)
+                    new_tokens, current_audio_processed_upto = self.online.process_iter()
+                else:
+                    new_tokens, current_audio_processed_upto = [], 0
 
                 # Get buffer information
-                _buffer_transcript_obj = self.online.get_buffer()
-                buffer_text = _buffer_transcript_obj.text
+                if self.online:
+                    _buffer_transcript_obj = self.online.get_buffer()
+                    buffer_text = _buffer_transcript_obj.text
+                else:
+                    _buffer_transcript_obj = None
+                    buffer_text = ""
 
                 if new_tokens:
-                    validated_text = self.sep.join([t.text for t in new_tokens])
+                    validated_text = self.sep.join([t.text for t in new_tokens if t.text is not None])
                     if buffer_text and buffer_text.startswith(validated_text):
                         buffer_text = buffer_text[len(validated_text):].lstrip()
 
@@ -342,7 +351,7 @@ class AudioProcessor:
                 if new_tokens:
                     candidate_end_times.append(new_tokens[-1].end)
 
-                if _buffer_transcript_obj.end is not None:
+                if _buffer_transcript_obj is not None and _buffer_transcript_obj.end is not None:
                     candidate_end_times.append(_buffer_transcript_obj.end)
 
                 candidate_end_times.append(current_audio_processed_upto)

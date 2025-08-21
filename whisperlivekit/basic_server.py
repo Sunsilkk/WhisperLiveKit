@@ -634,6 +634,23 @@ async def websocket_smart_store_endpoint(websocket: WebSocket):
                         transcription_engine=transcription_engine,
                     )
 
+                    # Store stream configuration in session
+                    if session_id not in smart_store_sessions:
+                        smart_store_sessions[session_id] = {
+                            "customers": {},
+                            "current_customer": customer_id,
+                            "session_start": time.time()
+                        }
+
+                    smart_store_sessions[session_id]["customers"][customer_id] = {
+                        "stream_id": stream_id,
+                        "sample_rate": sample_rate,
+                        "timeslice_ms": timeslice_ms,
+                        "client_ts": client_ts,
+                        "audio_processor": audio_processor,
+                        "transcript": ""
+                    }
+
                     # Send confirmation
                     await websocket.send_json({
                         "type": "audio_stream_ready",
@@ -645,7 +662,7 @@ async def websocket_smart_store_endpoint(websocket: WebSocket):
                         }
                     })
 
-                    logger.info(f"🚀 Smart Store audio started - Session: {session_id}, Customer: {customer_id}, Stream: {stream_id}, Codec: {codec}")
+                    logger.info(f"Smart Store audio started - Session: {session_id}, Customer: {customer_id}, Stream: {stream_id}, Codec: {codec}, Sample Rate: {sample_rate}Hz, Timeslice: {timeslice_ms}ms")
                     stream_started = True
                     expected_seq = 1
 
