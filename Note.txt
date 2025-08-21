@@ -3,11 +3,9 @@ CUDA_VISIBLE_DEVICES=2 /home/sunsilk/sunsilk/WhisperLiveKit/.venv/bin/python -m 
                     --model large-v3.pt \
                     --model-path model/large-v3.pt\
                     --diarization \
-                    --frame-threshold 100 \
-                    --beams 5 \
                     --language vi \
                     --port 1913 \
                     --host 0.0.0.0 \
                     --audio-max-len 3000 \
                     --ssl-certfile cert.pem \
-                    --ssl-keyfile key.pem   
+                    --ssl-keyfile key.pem
