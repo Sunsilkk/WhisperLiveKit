@@ -267,7 +267,7 @@
 
                 <div class="input-group">
                     <label for="websocketUrl">WebSocket URL:</label>
-                    <input type="text" id="websocketUrl" value="ws://localhost:8000/asr-smart-store">
+                    <input type="text" id="websocketUrl" value="wss://160.191.164.16:1913/asr-smart-store">
                 </div>
 
                 <div class="input-group">
@@ -394,9 +394,12 @@
         }
 
         function connectWebSocket() {
-            const url = document.getElementById('websocketUrl').value;
+            let url = document.getElementById('websocketUrl').value;
 
-            if (websocket && websocket.readyState === WebSocket.OPEN) {
+            // Force ws:// protocol to prevent auto-upgrade to wss://
+            if (url.startsWith('wss://')) {
+                url = url.replace('wss://', 'ws://');
+                addToTranscript('🔧 Forced protocol change from wss:// to ws://', 'warningbsocket && websocket.readyState === WebSocket.OPEN) {
                 updateStatus('WebSocket already connected', 'warning');
                 return;
             }

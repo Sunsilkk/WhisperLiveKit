@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Connection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .disconnect {
+            background-color: #dc3545;
+        }
+        .disconnect:hover {
+            background-color: #c82333;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.connecting {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔌 WebSocket Connection Test</h1>
+        <p>Test kết nối WebSocket để debug vấn đề WhisperLiveKit</p>
+
+        <div class="input-group">
+            <label for="websocketUrl">WebSocket URL:</label>
+            <input type="text" id="websocketUrl" value="ws://localhost:1913/asr">
+        </div>
+
+        <button id="connectBtn" onclick="connectWebSocket()">🔗 Connect</button>
+        <button id="disconnectBtn" onclick="disconnectWebSocket()" disabled class="disconnect">❌ Disconnect</button>
+        <button onclick="sendTestAudio()" id="testBtn" disabled>🎵 Send Test Audio</button>
+        <button onclick="clearLog()">🗑️ Clear Log</button>
+
+        <div id="status" class="status disconnected">Disconnected</div>
+
+        <h3>📝 Connection Log:</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let websocket = null;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: #666;">[${timestamp}]</span> <span style="color: ${getLogColor(type)};">${message}</span>`;
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function getLogColor(type) {
+            switch(type) {
+                case 'error': return '#dc3545';
+                case 'success': return '#28a745';
+                case 'warning': return '#ffc107';
+                default: return '#007bff';
+            }
+        }
+
+        function updateStatus(message, className) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${className}`;
+        }
+
+        function updateButtons(connected) {
+            document.getElementById('connectBtn').disabled = connected;
+            document.getElementById('disconnectBtn').disabled = !connected;
+            document.getElementById('testBtn').disabled = !connected;
+        }
+
+        function connectWebSocket() {
+            const url = document.getElementById('websocketUrl').value.trim();
+
+            if (!url) {
+                log('Please enter a WebSocket URL', 'error');
+                return;
+            }
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                log('WebSocket already connected', 'warning');
+                return;
+            }
+
+            try {
+                log(`Attempting to connect to: ${url}`, 'info');
+                updateStatus('Connecting...', 'connecting');
+
+                websocket = new WebSocket(url);
+
+                websocket.onopen = function(event) {
+                    log('✅ WebSocket connection opened successfully!', 'success');
+                    updateStatus('Connected', 'connected');
+                    updateButtons(true);
+                };
+
+                websocket.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`📨 Received JSON: ${JSON.stringify(data)}`, 'success');
+                    } catch (e) {
+                        log(`📨 Received data: ${event.data}`, 'success');
+                    }
+                };
+
+                websocket.onclose = function(event) {
+                    log(`❌ WebSocket closed. Code: ${event.code}, Reason: ${event.reason}`, 'error');
+                    updateStatus('Disconnected', 'disconnected');
+                    updateButtons(false);
+                    websocket = null;
+                };
+
+                websocket.onerror = function(error) {
+                    log(`❌ WebSocket error occurred: ${error}`, 'error');
+                    updateStatus('Connection Error', 'disconnected');
+                };
+
+            } catch (error) {
+                log(`❌ Failed to create WebSocket: ${error.message}`, 'error');
+                updateStatus('Connection Failed', 'disconnected');
+            }
+        }
+
+        function disconnectWebSocket() {
+            if (websocket) {
+                log('🔌 Manually disconnecting WebSocket...', 'info');
+                websocket.close();
+            }
+        }
+
+        function sendTestAudio() {
+            if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket not connected', 'error');
+                return;
+            }
+
+            try {
+                // Create a small test audio blob (empty WebM)
+                const testBlob = new Blob([], { type: 'audio/webm' });
+                websocket.send(testBlob);
+                log('🎵 Sent test audio blob', 'info');
+            } catch (error) {
+                log(`❌ Failed to send test audio: ${error.message}`, 'error');
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            log('🚀 WebSocket test page loaded', 'info');
+            updateButtons(false);
+
+            // Auto-detect current host/port if accessing via browser
+            if (window.location.hostname && window.location.port) {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const autoUrl = `${protocol}//${window.location.hostname}:${window.location.port}/asr`;
+                document.getElementById('websocketUrl').value = autoUrl;
+                log(`🔍 Auto-detected URL: ${autoUrl}`, 'info');
+            }
+        });
+    </script>
+</body>
+</html>
