@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 import os
 from typing import Optional
+from dotenv import load_dotenv
 
 import httpx
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
@@ -19,7 +20,7 @@ logger.setLevel(logging.DEBUG)
 args = parse_args()
 transcription_engine = None
 
-
+load_dotenv()
 API_BASE = os.getenv("API_BASE")
 ACTOR_ID = os.getenv("ACTOR_ID")
 
@@ -88,8 +89,8 @@ async def save_event_to_db(
 
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(
-                f"{API_BASE}/latest/waiting-to-pay",
+            resp = await client.post(
+                f"{API_BASE}/latest/uuid-waiting-to-pay",
                 json={"camera_id": camera_id},
                 headers={
                     "Content-Type": "application/json",
@@ -97,21 +98,20 @@ async def save_event_to_db(
                 },
             )
             resp.raise_for_status()
-            uuid = resp.json().get("uuid")
+            uuid = resp.json().get("data", {}).get("uuid")
             if not uuid:
                 logger.warning(f"Cannot get uuid for camera_id={camera_id}")
                 return
 
-            payload = {
-                "event": event_code,
-                "voice_text": voice_text,
-                "camera_id": camera_id,
-                "actor_id": ACTOR_ID,
-                "uuid": uuid,
-            }
             post_resp = await client.post(
                 API_BASE,
-                json=payload,
+                json={
+                    "event": event_code,
+                    "voice_text": voice_text,
+                    "camera_id": camera_id,
+                    "actor_id": ACTOR_ID,
+                    "uuid": uuid,
+                },
                 headers={
                     "Content-Type": "application/json",
                     "accept": "*/*",
@@ -124,51 +124,63 @@ async def save_event_to_db(
             logger.error(f"Error saving event to DB: {e}")
 
 
+async def process_lines_worker(camera_id, response, last_event_ref):
+    try:
+        lines = response.get("lines", [])
+        last_line_with_text = None
+        for line in reversed(lines):
+            if line.get("text", "").strip():
+                last_line_with_text = line
+                break
+
+        if not last_line_with_text:
+            return
+
+        text = last_line_with_text.get("text", "").lower()
+
+        new_event = None
+        if "xin chào" in text:
+            new_event = "xin chào"
+        elif "xin lỗi" in text:
+            new_event = "xin lỗi"
+        elif "tạm biệt" in text:
+            new_event = "tạm biệt"
+
+        if new_event and new_event != last_event_ref[0]:
+            await save_event_to_db(
+                camera_id,
+                new_event,
+                last_line_with_text["text"],
+            )
+            last_event_ref[0] = new_event
+
+    except Exception as e:
+        logger.error(f"Error in process_lines_worker (camera_id={camera_id}): {e}")
+
+
 async def handle_websocket_results_v2(
     websocket,
     results_generator,
     camera_id: Optional[str] = None,
 ):
-    last_event = None
+    last_event_ref = [None]
 
     try:
         async for response in results_generator:
             await websocket.send_json(response)
-
-            lines = response.get("lines", [])
-            last_line_with_text = None
-            for line in reversed(lines):
-                if line.get("text", "").strip():
-                    last_line_with_text = line
-                    break
-
-            if not last_line_with_text:
-                continue
-
-            text = last_line_with_text.get("text", "").lower()
-
-            new_event = None
-            if "xin chào" in text:
-                new_event = "xin chào"
-            elif "xin lỗi" in text:
-                new_event = "xin lỗi"
-            elif "tạm biệt" in text:
-                new_event = "tạm biệt"
-
-            if new_event and new_event != last_event:
-                await save_event_to_db(
+            asyncio.create_task(
+                process_lines_worker(
                     camera_id,
-                    new_event,
-                    last_line_with_text["text"],
+                    response,
+                    last_event_ref,
                 )
-                last_event = new_event
+            )
 
         logger.info("Results generator finished. Sending 'ready_to_stop' to client.")
         await websocket.send_json({"type": "ready_to_stop"})
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected (camera_id={camera_id})")
-
     except Exception as e:
         logger.error(f"Error in WebSocket results handler (camera_id={camera_id}): {e}")
 
