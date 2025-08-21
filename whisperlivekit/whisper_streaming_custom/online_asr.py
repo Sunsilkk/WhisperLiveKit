@@ -157,7 +157,11 @@ class OnlineASRProcessor:
         """
         If silences are > 5s, we do a complete context clear. Otherwise, we just insert a small silence and shift the last_attend_frame
         """
-        if silence_duration < 3:
+        # if self.transcript_buffer.buffer:
+        #     self.committed.extend(self.transcript_buffer.buffer)
+        #     self.transcript_buffer.buffer = []
+            
+        if True: #silence_duration < 3: #we want the last audio to be treated to not have a gap. could also be handled in the future in ends_with_silence.
             gap_silence = np.zeros(int(16000 * silence_duration), dtype=np.int16)
             self.insert_audio_chunk(gap_silence)
         else:
@@ -406,128 +410,3 @@ class OnlineASRProcessor:
             start = None
             end = None
         return Transcript(start, end, text, probability=probability)
-
-
-class VACOnlineASRProcessor:
-    """
-    Wraps an OnlineASRProcessor with a Voice Activity Controller (VAC).
-    
-    It receives small chunks of audio, applies VAD (e.g. with Silero),
-    and when the system detects a pause in speech (or end of an utterance)
-    it finalizes the utterance immediately.
-    """
-    SAMPLING_RATE = 16000
-
-    def __init__(self, online_chunk_size: float, *args, **kwargs):
-        self.online_chunk_size = online_chunk_size
-        self.online = OnlineASRProcessor(*args, **kwargs)
-        self.asr = self.online.asr
-        
-        # Load a VAD model (e.g. Silero VAD)
-        import torch
-        model, _ = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad")
-        from ..silero_vad_iterator import FixedVADIterator
-
-        self.vac = FixedVADIterator(model)
-        self.logfile = self.online.logfile
-        self.last_input_audio_stream_end_time: float = 0.0
-        self.init()
-
-    def init(self):
-        self.online.init()
-        self.vac.reset_states()
-        self.current_online_chunk_buffer_size = 0
-        self.last_input_audio_stream_end_time = self.online.buffer_time_offset
-        self.is_currently_final = False
-        self.status: Optional[str] = None  # "voice" or "nonvoice"
-        self.audio_buffer = np.array([], dtype=np.float32)
-        self.buffer_offset = 0  # in frames
-
-    def get_audio_buffer_end_time(self) -> float:
-        """Returns the absolute end time of the audio processed by the underlying OnlineASRProcessor."""
-        return self.online.get_audio_buffer_end_time()
-
-    def clear_buffer(self):
-        self.buffer_offset += len(self.audio_buffer)
-        self.audio_buffer = np.array([], dtype=np.float32)
-
-    def insert_audio_chunk(self, audio: np.ndarray, audio_stream_end_time: float):
-        """
-        Process an incoming small audio chunk:
-          - run VAD on the chunk,
-          - decide whether to send the audio to the online ASR processor immediately,
-          - and/or to mark the current utterance as finished.
-        """
-        self.last_input_audio_stream_end_time = audio_stream_end_time
-        res = self.vac(audio)
-        self.audio_buffer = np.append(self.audio_buffer, audio)
-
-        if res is not None:
-            # VAD returned a result; adjust the frame number
-            frame = list(res.values())[0] - self.buffer_offset
-            if "start" in res and "end" not in res:
-                self.status = "voice"
-                send_audio = self.audio_buffer[frame:]
-                self.online.init(offset=(frame + self.buffer_offset) / self.SAMPLING_RATE)
-                self.online.insert_audio_chunk(send_audio)
-                self.current_online_chunk_buffer_size += len(send_audio)
-                self.clear_buffer()
-            elif "end" in res and "start" not in res:
-                self.status = "nonvoice"
-                send_audio = self.audio_buffer[:frame]
-                self.online.insert_audio_chunk(send_audio)
-                self.current_online_chunk_buffer_size += len(send_audio)
-                self.is_currently_final = True
-                self.clear_buffer()
-            else:
-                beg = res["start"] - self.buffer_offset
-                end = res["end"] - self.buffer_offset
-                self.status = "nonvoice"
-                send_audio = self.audio_buffer[beg:end]
-                self.online.init(offset=(beg + self.buffer_offset) / self.SAMPLING_RATE)
-                self.online.insert_audio_chunk(send_audio)
-                self.current_online_chunk_buffer_size += len(send_audio)
-                self.is_currently_final = True
-                self.clear_buffer()
-        else:
-            if self.status == "voice":
-                self.online.insert_audio_chunk(self.audio_buffer)
-                self.current_online_chunk_buffer_size += len(self.audio_buffer)
-                self.clear_buffer()
-            else:
-                # Keep 1 second worth of audio in case VAD later detects voice,
-                # but trim to avoid unbounded memory usage.
-                self.buffer_offset += max(0, len(self.audio_buffer) - self.SAMPLING_RATE)
-                self.audio_buffer = self.audio_buffer[-self.SAMPLING_RATE:]
-
-    def process_iter(self) -> Tuple[List[ASRToken], float]:
-        """
-        Depending on the VAD status and the amount of accumulated audio,
-        process the current audio chunk.
-        Returns a tuple: (list of committed ASRToken objects, float representing the audio processed up to time).
-        """
-        if self.is_currently_final:
-            return self.finish()
-        elif self.current_online_chunk_buffer_size > self.SAMPLING_RATE * self.online_chunk_size:
-            self.current_online_chunk_buffer_size = 0
-            return self.online.process_iter()
-        else:
-            logger.debug("No online update, only VAD")
-            return [], self.last_input_audio_stream_end_time
-
-    def finish(self) -> Tuple[List[ASRToken], float]:
-        """
-        Finish processing by flushing any remaining text.
-        Returns a tuple: (list of remaining ASRToken objects, float representing the final audio processed up to time).
-        """
-        result_tokens, processed_upto = self.online.finish()
-        self.current_online_chunk_buffer_size = 0
-        self.is_currently_final = False
-        return result_tokens, processed_upto
-    
-    def get_buffer(self):
-        """
-        Get the unvalidated buffer in string format.
-        """
-        return self.online.concatenate_tokens(self.online.transcript_buffer.buffer)
-

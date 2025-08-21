@@ -1,10 +1,10 @@
 try:
     from whisperlivekit.whisper_streaming_custom.whisper_online import backend_factory
-    from whisperlivekit.whisper_streaming_custom.online_asr import VACOnlineASRProcessor, OnlineASRProcessor
+    from whisperlivekit.whisper_streaming_custom.online_asr import OnlineASRProcessor
 except ImportError:
     from .whisper_streaming_custom.whisper_online import backend_factory
-    from .whisper_streaming_custom.online_asr import VACOnlineASRProcessor, OnlineASRProcessor
-from whisperlivekit.warmup import warmup_asr
+    from .whisper_streaming_custom.online_asr import OnlineASRProcessor
+from whisperlivekit.warmup import warmup_asr, warmup_online
 from argparse import Namespace
 import sys
 
@@ -147,19 +147,7 @@ def online_factory(args, asr, tokenizer, logfile=sys.stderr):
             logfile=logfile,
         )
         # warmup_online(online, args.warmup_file)
-    elif False: #elif args.vac:
-        """
-        WhisperStreaming backend also offer to use VAC.
-        but we handle it directly in the audio processor, which is more efficient
-        """
-        online = VACOnlineASRProcessor(
-            args.min_chunk_size,
-            asr,
-            tokenizer,
-            logfile=logfile,
-            buffer_trimming=(args.buffer_trimming, args.buffer_trimming_sec),
-            confidence_validation = args.confidence_validation
-        )
+
     else:
         online = OnlineASRProcessor(
             asr,

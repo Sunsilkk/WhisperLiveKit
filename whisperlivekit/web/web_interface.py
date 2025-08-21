@@ -11,3 +11,23 @@ def get_web_interface_html():
     except Exception as e:
         logger.error(f"Error loading web interface HTML: {e}")
         return "<html><body><h1>Error loading interface</h1></body></html>"
+
+
+if __name__ == '__main__':
+    
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
+    import uvicorn
+    from starlette.staticfiles import StaticFiles
+    import pathlib
+    import whisperlivekit.web as webpkg
+    
+    app = FastAPI()    
+    web_dir = pathlib.Path(webpkg.__file__).parent
+    app.mount("/web", StaticFiles(directory=str(web_dir)), name="web")
+    
+    @app.get("/")
+    async def get():
+        return HTMLResponse(get_web_interface_html())
+
+    uvicorn.run(app=app)

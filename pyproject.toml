@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "whisperlivekit"
-version = "0.2.5"
+version = "0.2.5.post1"
 description = "Real-time, Fully Local Whisper's Speech-to-Text and Speaker Diarization"
 readme = "README.md"
 authors = [{ name = "Quentin Fuxa" }, { name = "Sunsilk" }]
@@ -66,7 +66,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-whisperlivekit = ["web/*.html"]
+whisperlivekit = ["web/*.html", "web/*.css", "web/*.js", "web/src/*.svg"]
 "whisperlivekit.simul_whisper.whisper.assets" = ["*.tiktoken", "*.npz"]
 
 [tool.uv.sources]

@@ -10,6 +10,9 @@ from typing import Dict
 import uuid as uuid_lib
 import aiohttp
 import time
+from starlette.staticfiles import StaticFiles
+import pathlib
+import whisperlivekit.web as webpkg
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger().setLevel(logging.WARNING)
@@ -42,6 +45,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+web_dir = pathlib.Path(webpkg.__file__).parent
+app.mount("/web", StaticFiles(directory=str(web_dir)), name="web")
 
 @app.get("/")
 async def get():
