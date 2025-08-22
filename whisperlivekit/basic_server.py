@@ -174,7 +174,7 @@ async def handle_websocket_results_v2(
     results_generator,
     camera_id: Optional[str] = None,
 ):
-    event_state_ref = [None, None]
+    event_state_ref = [(None, None)]
 
     try:
         async for response in results_generator:
