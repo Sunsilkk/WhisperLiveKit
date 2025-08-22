@@ -71,6 +71,7 @@ async def handle_websocket_results(
 
 async def save_event_to_db(
     camera_id: Optional[str],
+    actor_id: Optional[str],
     event: str,
     voice_text: str,
 ):
@@ -94,17 +95,16 @@ async def save_event_to_db(
 
     async with httpx.AsyncClient() as client:
         try:
-            # resp = await client.post(
-            #     f"{API_BASE}/latest/uuid-waiting-to-pay",
-            #     json={"camera_id": camera_id},
-            #     headers={
-            #         "Content-Type": "application/json",
-            #         "accept": "*/*",
-            #     },
-            # )
-            # resp.raise_for_status()
-            # uuid = resp.json().get("data", {}).get("uuid")
-            uuid = "vanlinhtruongdang"
+            resp = await client.post(
+                f"{API_BASE}/latest/uuid-waiting-to-pay",
+                json={"camera_id": camera_id},
+                headers={
+                    "Content-Type": "application/json",
+                    "accept": "*/*",
+                },
+            )
+            resp.raise_for_status()
+            uuid = resp.json().get("data", {}).get("uuid")
             if not uuid:
                 logger.warning(f"Cannot get uuid for camera_id={camera_id}")
                 return
@@ -115,7 +115,7 @@ async def save_event_to_db(
                     "event": event_code,
                     "voice_text": voice_text,
                     "camera_id": camera_id,
-                    # "actor_id": ACTOR_ID,
+                    "actor_id": actor_id if actor_id else ACTOR_ID,
                     "uuid": uuid,
                 },
                 headers={
@@ -130,7 +130,7 @@ async def save_event_to_db(
             logger.error(f"Error saving event to DB: {e}")
 
 
-async def process_lines_worker(camera_id, response, event_state_ref):
+async def process_lines_worker(camera_id, actor_id, response, event_state_ref):
     try:
         lines = response.get("lines", [])
         last_line_with_text = None
@@ -160,6 +160,7 @@ async def process_lines_worker(camera_id, response, event_state_ref):
                 logger.info(f"Triggering event: {new_event} for camera {camera_id}")
                 await save_event_to_db(
                     camera_id,
+                    actor_id,
                     new_event,
                     last_line_with_text["text"],
                 )
@@ -173,6 +174,7 @@ async def handle_websocket_results_v2(
     websocket,
     results_generator,
     camera_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
 ):
     event_state_ref = [(None, None)]
 
@@ -182,6 +184,7 @@ async def handle_websocket_results_v2(
             asyncio.create_task(
                 process_lines_worker(
                     camera_id,
+                    actor_id,
                     response,
                     event_state_ref,
                 )
@@ -257,6 +260,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def websocket_endpoint_v2(
     websocket: WebSocket,
     camera_id: Optional[str] = Query(None, description="The unique ID of camera"),
+    actor_id: Optional[str] = Query(None, description="The unique ID of actor"),
 ):
     global transcription_engine
     client_ip = websocket.client.host if websocket.client else "unknown"
@@ -272,7 +276,14 @@ async def websocket_endpoint_v2(
         results_generator = await audio_processor.create_tasks()
         logger.info(f"Audio processor tasks created for {client_ip}, camera_id={camera_id}")
 
-        websocket_task = asyncio.create_task(handle_websocket_results_v2(websocket, results_generator, camera_id))
+        websocket_task = asyncio.create_task(
+            handle_websocket_results_v2(
+                websocket,
+                results_generator,
+                camera_id,
+                actor_id,
+            )
+        )
 
         message_count = 0
         try:
