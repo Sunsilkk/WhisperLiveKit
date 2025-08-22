@@ -78,8 +78,6 @@ async def save_event_to_db(
         logger.warning("camera_id is None, skip saving event.")
         return
 
-    API_BASE="https://nguyns-macbook-pro.degu-kokanue.ts.net/api/v1/experience-event"
-
     if not API_BASE:
         logger.warning("API_BASE is not configured, skip saving event.")
         return
@@ -96,16 +94,17 @@ async def save_event_to_db(
 
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post(
-                f"{API_BASE}/latest/uuid-waiting-to-pay",
-                json={"camera_id": camera_id},
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "*/*",
-                },
-            )
-            resp.raise_for_status()
-            uuid = resp.json().get("data", {}).get("uuid")
+            # resp = await client.post(
+            #     f"{API_BASE}/latest/uuid-waiting-to-pay",
+            #     json={"camera_id": camera_id},
+            #     headers={
+            #         "Content-Type": "application/json",
+            #         "accept": "*/*",
+            #     },
+            # )
+            # resp.raise_for_status()
+            # uuid = resp.json().get("data", {}).get("uuid")
+            uuid = "vanlinhtruongdang"
             if not uuid:
                 logger.warning(f"Cannot get uuid for camera_id={camera_id}")
                 return
@@ -116,7 +115,7 @@ async def save_event_to_db(
                     "event": event_code,
                     "voice_text": voice_text,
                     "camera_id": camera_id,
-                    "actor_id": ACTOR_ID,
+                    # "actor_id": ACTOR_ID,
                     "uuid": uuid,
                 },
                 headers={
@@ -153,9 +152,9 @@ async def process_lines_worker(camera_id, response, event_state_ref):
         new_event = None
         if text.startswith("xin chào") or " xin chào " in text:
             new_event = "xin chào"
-        elif text.startswith("xin lỗi") or " xin lỗi " in text:
+        if text.startswith("xin lỗi") or " xin lỗi " in text:
             new_event = "xin lỗi"
-        elif text.startswith("tạm biệt") or " tạm biệt " in text:
+        if text.startswith("tạm biệt") or " tạm biệt " in text:
             new_event = "tạm biệt"
 
         if new_event:
