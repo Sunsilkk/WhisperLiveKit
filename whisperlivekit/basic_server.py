@@ -154,9 +154,9 @@ async def process_lines_worker(camera_id, response, event_state_ref):
             new_events.append("cảm ơn")
 
         for new_event in new_events:
-            last_event = event_state_ref[0]
+            last_event, last_content = event_state_ref[0]
 
-            if new_event != last_event:
+            if new_event != last_event and last_line_with_text["text"] != last_content:
                 logger.info(f"Triggering event: {new_event} for camera {camera_id}")
                 await save_event_to_db(
                     camera_id,
@@ -174,7 +174,7 @@ async def handle_websocket_results_v2(
     results_generator,
     camera_id: Optional[str] = None,
 ):
-    event_state_ref = [None]
+    event_state_ref = [None, None]
 
     try:
         async for response in results_generator:
