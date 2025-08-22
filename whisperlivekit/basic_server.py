@@ -158,13 +158,13 @@ async def process_lines_worker(camera_id, actor_id, response, event_state_ref):
 
             if new_event != last_event and last_line_with_text["text"] != last_content:
                 logger.info(f"Triggering event: {new_event} for camera {camera_id}")
+                event_state_ref[0] = new_event, last_line_with_text["text"]
                 await save_event_to_db(
                     camera_id,
                     actor_id,
                     new_event,
                     last_line_with_text["text"],
                 )
-                event_state_ref[0] = new_event, last_line_with_text["text"]
 
     except Exception as e:
         logger.error(f"Error in process_lines_worker (camera_id={camera_id}): {e}")
