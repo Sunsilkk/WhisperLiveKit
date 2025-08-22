@@ -163,7 +163,7 @@ async def process_lines_worker(camera_id, response, event_state_ref):
                     new_event,
                     last_line_with_text["text"],
                 )
-                event_state_ref[0] = new_event
+                event_state_ref[0] = new_event, last_line_with_text["text"]
 
     except Exception as e:
         logger.error(f"Error in process_lines_worker (camera_id={camera_id}): {e}")
