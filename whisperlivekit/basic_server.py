@@ -85,7 +85,7 @@ async def save_event_to_db(
     event_map = {
         "xin chào": "SAY_HELLO",
         "xin lỗi": "SAY_SORRY",
-        "tạm biệt": "SAY_GOODBYE",
+        "cảm ơn": "SAY_GOODBYE",
     }
     event_code = event_map.get(event)
     if not event_code:
@@ -143,34 +143,27 @@ async def process_lines_worker(camera_id, response, event_state_ref):
             return
 
         text = last_line_with_text.get("text", "").lower().strip()
-        current_time = time.time()
-
-        # Minimum time between same events (in seconds)
-        EVENT_COOLDOWN = 10.0
 
         # More strict pattern matching
         new_event = None
-        if text.startswith("xin chào") or " xin chào " in text:
+        if "xin chào" in text:
             new_event = "xin chào"
-        if text.startswith("xin lỗi") or " xin lỗi " in text:
+        if "xin lỗi" in text:
             new_event = "xin lỗi"
-        if text.startswith("tạm biệt") or " tạm biệt " in text:
-            new_event = "tạm biệt"
+        if "cảm ơn" in text:
+            new_event = "cảm ơn"
 
         if new_event:
-            last_event, last_time = event_state_ref[0]
+            last_event = event_state_ref[0]
 
-            # Check if this is a different event OR enough time has passed
-            if (new_event != last_event) or (current_time - last_time > EVENT_COOLDOWN):
+            if new_event != last_event:
                 logger.info(f"Triggering event: {new_event} for camera {camera_id}")
                 await save_event_to_db(
                     camera_id,
                     new_event,
                     last_line_with_text["text"],
                 )
-                event_state_ref[0] = (new_event, current_time)
-            else:
-                logger.debug(f"Event {new_event} suppressed (cooldown: {current_time - last_time:.1f}s)")
+                event_state_ref[0] = new_event
 
     except Exception as e:
         logger.error(f"Error in process_lines_worker (camera_id={camera_id}): {e}")
@@ -181,8 +174,7 @@ async def handle_websocket_results_v2(
     results_generator,
     camera_id: Optional[str] = None,
 ):
-    # State: (last_event, last_timestamp)
-    event_state_ref = [(None, 0.0)]
+    event_state_ref = [None]
 
     try:
         async for response in results_generator:
