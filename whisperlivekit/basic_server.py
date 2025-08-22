@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from typing import Optional
 from dotenv import load_dotenv
+import time
 
 import httpx
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
@@ -77,6 +78,12 @@ async def save_event_to_db(
         logger.warning("camera_id is None, skip saving event.")
         return
 
+    API_BASE="https://nguyns-macbook-pro.degu-kokanue.ts.net/api/v1/experience-event"
+
+    if not API_BASE:
+        logger.warning("API_BASE is not configured, skip saving event.")
+        return
+
     event_map = {
         "xin chào": "SAY_HELLO",
         "xin lỗi": "SAY_SORRY",
@@ -124,7 +131,7 @@ async def save_event_to_db(
             logger.error(f"Error saving event to DB: {e}")
 
 
-async def process_lines_worker(camera_id, response, last_event_ref):
+async def process_lines_worker(camera_id, response, event_state_ref):
     try:
         lines = response.get("lines", [])
         last_line_with_text = None
@@ -136,23 +143,35 @@ async def process_lines_worker(camera_id, response, last_event_ref):
         if not last_line_with_text:
             return
 
-        text = last_line_with_text.get("text", "").lower()
+        text = last_line_with_text.get("text", "").lower().strip()
+        current_time = time.time()
 
+        # Minimum time between same events (in seconds)
+        EVENT_COOLDOWN = 10.0
+
+        # More strict pattern matching
         new_event = None
-        if "xin chào" in text:
+        if text.startswith("xin chào") or " xin chào " in text:
             new_event = "xin chào"
-        elif "xin lỗi" in text:
+        elif text.startswith("xin lỗi") or " xin lỗi " in text:
             new_event = "xin lỗi"
-        elif "tạm biệt" in text:
+        elif text.startswith("tạm biệt") or " tạm biệt " in text:
             new_event = "tạm biệt"
 
-        if new_event and new_event != last_event_ref[0]:
-            await save_event_to_db(
-                camera_id,
-                new_event,
-                last_line_with_text["text"],
-            )
-            last_event_ref[0] = new_event
+        if new_event:
+            last_event, last_time = event_state_ref[0]
+
+            # Check if this is a different event OR enough time has passed
+            if (new_event != last_event) or (current_time - last_time > EVENT_COOLDOWN):
+                logger.info(f"Triggering event: {new_event} for camera {camera_id}")
+                await save_event_to_db(
+                    camera_id,
+                    new_event,
+                    last_line_with_text["text"],
+                )
+                event_state_ref[0] = (new_event, current_time)
+            else:
+                logger.debug(f"Event {new_event} suppressed (cooldown: {current_time - last_time:.1f}s)")
 
     except Exception as e:
         logger.error(f"Error in process_lines_worker (camera_id={camera_id}): {e}")
@@ -163,7 +182,8 @@ async def handle_websocket_results_v2(
     results_generator,
     camera_id: Optional[str] = None,
 ):
-    last_event_ref = [None]
+    # State: (last_event, last_timestamp)
+    event_state_ref = [(None, 0.0)]
 
     try:
         async for response in results_generator:
@@ -172,7 +192,7 @@ async def handle_websocket_results_v2(
                 process_lines_worker(
                     camera_id,
                     response,
-                    last_event_ref,
+                    event_state_ref,
                 )
             )
 
@@ -188,34 +208,47 @@ async def handle_websocket_results_v2(
 @app.websocket("/asr")
 async def websocket_endpoint(websocket: WebSocket):
     global transcription_engine
-    audio_processor = AudioProcessor(
-        transcription_engine=transcription_engine,
-    )
-    await websocket.accept()
-    logger.info("WebSocket connection opened.")
-
-    results_generator = await audio_processor.create_tasks()
-    websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator))
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    logger.info(f"New WebSocket connection from {client_ip}")
 
     try:
-        while True:
-            message = await websocket.receive_bytes()
-            await audio_processor.process_audio(message)
+        audio_processor = AudioProcessor(
+            transcription_engine=transcription_engine,
+        )
+        await websocket.accept()
+        logger.info(f"WebSocket connection accepted for {client_ip}")
 
-    except KeyError as e:
-        if "bytes" in str(e):
-            logger.warning("Client has closed the connection.")
-        else:
-            logger.error(f"Unexpected KeyError in websocket_endpoint: {e}", exc_info=True)
+        results_generator = await audio_processor.create_tasks()
+        logger.info(f"Audio processor tasks created for {client_ip}")
 
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected by client during message receiving loop.")
+        websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator))
+
+        message_count = 0
+        try:
+            while True:
+                logger.debug(f"Waiting for message from {client_ip}")
+                message = await websocket.receive_bytes()
+                message_count += 1
+                logger.debug(f"Received message #{message_count} from {client_ip}, size: {len(message)} bytes")
+                await audio_processor.process_audio(message)
+
+        except KeyError as e:
+            if "bytes" in str(e):
+                logger.warning(f"Client {client_ip} has closed the connection (KeyError: {e})")
+            else:
+                logger.error(f"Unexpected KeyError in websocket_endpoint for {client_ip}: {e}", exc_info=True)
+
+        except WebSocketDisconnect as e:
+            logger.info(f"WebSocket disconnected by client {client_ip} during message receiving loop. Code: {e.code}, Reason: {e.reason}")
+
+        except Exception as e:
+            logger.error(f"Unexpected error in websocket_endpoint main loop for {client_ip}: {e}", exc_info=True)
 
     except Exception as e:
-        logger.error(f"Unexpected error in websocket_endpoint main loop: {e}", exc_info=True)
+        logger.error(f"Error during WebSocket setup for {client_ip}: {e}", exc_info=True)
 
     finally:
-        logger.info("Cleaning up WebSocket endpoint...")
+        logger.info(f"Cleaning up WebSocket endpoint for {client_ip}...")
         if not websocket_task.done():
             websocket_task.cancel()
         try:
@@ -226,7 +259,7 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.warning(f"Exception while awaiting websocket_task completion: {e}")
 
         await audio_processor.cleanup()
-        logger.info("WebSocket endpoint cleaned up successfully.")
+        logger.info(f"WebSocket endpoint cleaned up successfully for {client_ip}.")
 
 
 @app.websocket("/asr-v2")
@@ -235,34 +268,47 @@ async def websocket_endpoint_v2(
     camera_id: Optional[str] = Query(None, description="The unique ID of camera"),
 ):
     global transcription_engine
-    audio_processor = AudioProcessor(
-        transcription_engine=transcription_engine,
-    )
-    await websocket.accept()
-    logger.info("WebSocket connection opened.")
-
-    results_generator = await audio_processor.create_tasks()
-    websocket_task = asyncio.create_task(handle_websocket_results_v2(websocket, results_generator, camera_id))
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    logger.info(f"New WebSocket v2 connection from {client_ip}, camera_id={camera_id}")
 
     try:
-        while True:
-            message = await websocket.receive_bytes()
-            await audio_processor.process_audio(message)
+        audio_processor = AudioProcessor(
+            transcription_engine=transcription_engine,
+        )
+        await websocket.accept()
+        logger.info(f"WebSocket v2 connection accepted for {client_ip}, camera_id={camera_id}")
 
-    except KeyError as e:
-        if "bytes" in str(e):
-            logger.warning("Client has closed the connection.")
-        else:
-            logger.error(f"Unexpected KeyError in websocket_endpoint: {e}", exc_info=True)
+        results_generator = await audio_processor.create_tasks()
+        logger.info(f"Audio processor tasks created for {client_ip}, camera_id={camera_id}")
 
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected by client during message receiving loop.")
+        websocket_task = asyncio.create_task(handle_websocket_results_v2(websocket, results_generator, camera_id))
+
+        message_count = 0
+        try:
+            while True:
+                logger.debug(f"Waiting for message from {client_ip}, camera_id={camera_id}")
+                message = await websocket.receive_bytes()
+                message_count += 1
+                logger.debug(f"Received message #{message_count} from {client_ip}, camera_id={camera_id}, size: {len(message)} bytes")
+                await audio_processor.process_audio(message)
+
+        except KeyError as e:
+            if "bytes" in str(e):
+                logger.warning(f"Client {client_ip} (camera_id={camera_id}) has closed the connection (KeyError: {e})")
+            else:
+                logger.error(f"Unexpected KeyError in websocket_endpoint for {client_ip} (camera_id={camera_id}): {e}", exc_info=True)
+
+        except WebSocketDisconnect as e:
+            logger.info(f"WebSocket disconnected by client {client_ip} (camera_id={camera_id}) during message receiving loop. Code: {e.code}, Reason: {e.reason}")
+
+        except Exception as e:
+            logger.error(f"Unexpected error in websocket_endpoint main loop for {client_ip} (camera_id={camera_id}): {e}", exc_info=True)
 
     except Exception as e:
-        logger.error(f"Unexpected error in websocket_endpoint main loop: {e}", exc_info=True)
+        logger.error(f"Error during WebSocket v2 setup for {client_ip} (camera_id={camera_id}): {e}", exc_info=True)
 
     finally:
-        logger.info("Cleaning up WebSocket endpoint...")
+        logger.info(f"Cleaning up WebSocket v2 endpoint for {client_ip}, camera_id={camera_id}...")
         if not websocket_task.done():
             websocket_task.cancel()
         try:
@@ -274,7 +320,7 @@ async def websocket_endpoint_v2(
             logger.warning(f"Exception while awaiting websocket_task completion: {e}")
 
         await audio_processor.cleanup()
-        logger.info("WebSocket endpoint cleaned up successfully.")
+        logger.info(f"WebSocket v2 endpoint cleaned up successfully for {client_ip}, camera_id={camera_id}.")
 
 
 def main():

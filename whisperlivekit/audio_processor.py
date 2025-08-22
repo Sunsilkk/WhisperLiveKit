@@ -559,9 +559,11 @@ class AudioProcessor:
 
     async def create_tasks(self):
         """Create and start processing tasks."""
+        logger.info("Starting AudioProcessor task creation...")
         self.all_tasks_for_cleanup = []
         processing_tasks_for_watchdog = []
 
+        logger.info("Starting FFmpeg manager...")
         success = await self.ffmpeg_manager.start()
         if not success:
             logger.error("Failed to start FFmpeg manager")
@@ -577,24 +579,31 @@ class AudioProcessor:
                 }
             return error_generator()
 
+        logger.info("FFmpeg manager started successfully")
+
         if self.args.transcription and self.online:
+            logger.info("Creating transcription processor task...")
             self.transcription_task = asyncio.create_task(self.transcription_processor())
             self.all_tasks_for_cleanup.append(self.transcription_task)
             processing_tasks_for_watchdog.append(self.transcription_task)
 
         if self.args.diarization and self.diarization:
+            logger.info("Creating diarization processor task...")
             self.diarization_task = asyncio.create_task(self.diarization_processor(self.diarization))
             self.all_tasks_for_cleanup.append(self.diarization_task)
             processing_tasks_for_watchdog.append(self.diarization_task)
 
+        logger.info("Creating FFmpeg reader task...")
         self.ffmpeg_reader_task = asyncio.create_task(self.ffmpeg_stdout_reader())
         self.all_tasks_for_cleanup.append(self.ffmpeg_reader_task)
         processing_tasks_for_watchdog.append(self.ffmpeg_reader_task)
 
         # Monitor overall system health
+        logger.info("Creating watchdog task...")
         self.watchdog_task = asyncio.create_task(self.watchdog(processing_tasks_for_watchdog))
         self.all_tasks_for_cleanup.append(self.watchdog_task)
 
+        logger.info(f"All AudioProcessor tasks created successfully. Total tasks: {len(self.all_tasks_for_cleanup)}")
         return self.results_formatter()
 
     async def watchdog(self, tasks_to_monitor):
@@ -659,10 +668,16 @@ class AudioProcessor:
             logger.warning("AudioProcessor is stopping. Ignoring incoming audio.")
             return
 
+        # Check FFmpeg state before writing
+        ffmpeg_state = await self.ffmpeg_manager.get_state()
+        if ffmpeg_state != FFmpegState.RUNNING:
+            logger.warning(f"FFmpeg is not running (state: {ffmpeg_state}). Cannot process audio.")
+            return
+
         success = await self.ffmpeg_manager.write_data(message)
         if not success:
             ffmpeg_state = await self.ffmpeg_manager.get_state()
             if ffmpeg_state == FFmpegState.FAILED:
                 logger.error("FFmpeg is in FAILED state, cannot process audio")
             else:
-                logger.warning("Failed to write audio data to FFmpeg")
+                logger.warning(f"Failed to write audio data to FFmpeg. FFmpeg state: {ffmpeg_state}")
