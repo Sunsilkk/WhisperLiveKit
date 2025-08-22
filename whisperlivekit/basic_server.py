@@ -145,15 +145,15 @@ async def process_lines_worker(camera_id, response, event_state_ref):
         text = last_line_with_text.get("text", "").lower().strip()
 
         # More strict pattern matching
-        new_event = None
+        new_events = []
         if "xin chào" in text:
-            new_event = "xin chào"
+            new_events.append("xin chào")
         if "xin lỗi" in text:
-            new_event = "xin lỗi"
+            new_events.append("xin lỗi")
         if "cảm ơn" in text:
-            new_event = "cảm ơn"
+            new_events.append("cảm ơn")
 
-        if new_event:
+        for new_event in new_events:
             last_event = event_state_ref[0]
 
             if new_event != last_event:
