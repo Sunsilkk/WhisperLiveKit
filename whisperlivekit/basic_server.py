@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 import os
 from typing import Optional
 from dotenv import load_dotenv
-import time
 
 import httpx
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
@@ -86,7 +85,8 @@ async def save_event_to_db(
     event_map = {
         "xin chào": "SAY_HELLO",
         "xin lỗi": "SAY_SORRY",
-        "cảm ơn": "SAY_GOODBYE",
+        "tạm biệt": "SAY_GOODBYE",
+        "cảm ơn": "SAY_THANKYOU",
     }
     event_code = event_map.get(event)
     if not event_code:
@@ -95,16 +95,17 @@ async def save_event_to_db(
 
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post(
-                f"{API_BASE}/latest/uuid-waiting-to-pay",
-                json={"camera_id": camera_id},
-                headers={
-                    "Content-Type": "application/json",
-                    "accept": "*/*",
-                },
-            )
-            resp.raise_for_status()
-            uuid = resp.json().get("data", {}).get("uuid")
+            # resp = await client.post(
+            #     f"{API_BASE}/latest/uuid-waiting-to-pay",
+            #     json={"camera_id": camera_id},
+            #     headers={
+            #         "Content-Type": "application/json",
+            #         "accept": "*/*",
+            #     },
+            # )
+            # resp.raise_for_status()
+            # uuid = resp.json().get("data", {}).get("uuid")
+            uuid = "VANLINHTRUONGDANG"
             if not uuid:
                 logger.warning(f"Cannot get uuid for camera_id={camera_id}")
                 return
@@ -152,6 +153,8 @@ async def process_lines_worker(camera_id, actor_id, response, event_state_ref):
             new_events.append("xin lỗi")
         if "cảm ơn" in text:
             new_events.append("cảm ơn")
+        if "tạm biệt" in text:
+            new_events.append("tạm biệt")
 
         for new_event in new_events:
             last_event, last_content = event_state_ref[0]
