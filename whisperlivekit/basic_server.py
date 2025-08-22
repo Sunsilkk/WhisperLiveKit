@@ -144,6 +144,8 @@ async def process_lines_worker(camera_id, actor_id, response, event_state_ref):
             return
 
         text = last_line_with_text.get("text", "").lower().strip()
+        text = text.replace("hãy subscribe cho kênh các bạn hãy đăng ký kênh để ủng hộ kênh của chúng tôi. kênh để ủng hộ kênh nhé!", "")
+        text = text.replace("ghiền mì gõ để không bỏ lỡ những video hấp dẫn", "")
 
         # More strict pattern matching
         new_events = []
